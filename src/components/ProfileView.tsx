@@ -45,7 +45,7 @@ import Markdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
 import { db } from '../firebase';
-import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp, serverTimestamp } from 'firebase/firestore';
 import { PostCard } from './PostCard';
 import { motion, AnimatePresence } from 'motion/react';
 import { MUSIC_OPTIONS } from '../constants';
@@ -290,31 +290,154 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
   };
 
-  const [isFriend, setIsFriend] = useState(false);
+  const [friendStatus, setFriendStatus] = useState<'none' | 'sent' | 'received' | 'friends'>('none');
   const [friendshipLoading, setFriendshipLoading] = useState(true);
+  const [requestId, setRequestId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!user || !targetUserId) return;
-
-    const friendshipId = [user.uid, targetUserId].sort().join('_');
-    const unsubscribe = onSnapshot(doc(db, 'friendships', friendshipId), (doc) => {
-      setIsFriend(doc.exists());
+    if (!user || !targetUserId || isOwnProfile) {
       setFriendshipLoading(false);
-    });
-
-    return () => unsubscribe();
-  }, [user, targetUserId]);
-
-  const handleMessage = () => {
-    if (!isFriend) {
-      alert("You can only message users who are your friends. Send a friend request first!");
       return;
     }
+
+    setFriendshipLoading(true);
+    const friendshipId = [user.uid, targetUserId].sort().join('_');
+    
+    // Listen for friendship
+    const unsubFriendship = onSnapshot(doc(db, 'friendships', friendshipId), (fDoc) => {
+      if (fDoc.exists()) {
+        setFriendStatus('friends');
+        setFriendshipLoading(false);
+      } else {
+        // Check for outgoing request
+        const qOutgoing = query(
+          collection(db, 'friendRequests'),
+          where('fromUserId', '==', user.uid),
+          where('toUserId', '==', targetUserId)
+        );
+        const unsubOutgoing = onSnapshot(qOutgoing, (outSnap) => {
+          if (!outSnap.empty) {
+            setFriendStatus('sent');
+            setRequestId(outSnap.docs[0].id);
+            setFriendshipLoading(false);
+          } else {
+            // Check for incoming request
+            const qIncoming = query(
+              collection(db, 'friendRequests'),
+              where('fromUserId', '==', targetUserId),
+              where('toUserId', '==', user.uid)
+            );
+            const unsubIncoming = onSnapshot(qIncoming, (inSnap) => {
+              if (!inSnap.empty) {
+                setFriendStatus('received');
+                setRequestId(inSnap.docs[0].id);
+              } else {
+                setFriendStatus('none');
+                setRequestId(null);
+              }
+              setFriendshipLoading(false);
+            });
+            return () => unsubIncoming();
+          }
+        });
+        return () => unsubOutgoing();
+      }
+    });
+
+    return () => unsubFriendship();
+  }, [user, targetUserId, isOwnProfile]);
+
+  const handleAddFriend = async () => {
+    if (!user || !targetUserId || !currentUserData) return;
+    setFriendshipLoading(true);
+    try {
+      await addDoc(collection(db, 'friendRequests'), {
+        fromUserId: user.uid,
+        toUserId: targetUserId,
+        status: 'pending',
+        createdAt: serverTimestamp()
+      });
+
+      // Create notification
+      await addDoc(collection(db, 'notifications'), {
+        userId: targetUserId,
+        fromUserId: user.uid,
+        fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
+        fromUserAvatar: currentUserData.avatar || '',
+        type: 'friend_request',
+        text: 'sent you a friend request',
+        read: false,
+        createdAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error adding friend:", error);
+    } finally {
+      setFriendshipLoading(false);
+    }
+  };
+
+  const handleCancelRequest = async () => {
+    if (!requestId) return;
+    setFriendshipLoading(true);
+    try {
+      await deleteDoc(doc(db, 'friendRequests', requestId));
+    } catch (error) {
+      console.error("Error cancelling request:", error);
+    } finally {
+      setFriendshipLoading(false);
+    }
+  };
+
+  const handleAcceptRequest = async () => {
+    if (!user || !targetUserId || !requestId || !currentUserData) return;
+    setFriendshipLoading(true);
+    try {
+      // 1. Delete request
+      await deleteDoc(doc(db, 'friendRequests', requestId));
+      
+      // 2. Create friendship
+      const friendshipId = [user.uid, targetUserId].sort().join('_');
+      await setDoc(doc(db, 'friendships', friendshipId), {
+        uids: [user.uid, targetUserId],
+        createdAt: serverTimestamp()
+      });
+
+      // 3. Create chat
+      await setDoc(doc(db, 'chats', friendshipId), {
+        participants: [user.uid, targetUserId],
+        lastMessage: 'You are now friends! Say hi.',
+        lastMessageAt: serverTimestamp(),
+        unreadCount: {
+          [user.uid]: 0,
+          [targetUserId]: 0
+        }
+      });
+
+      // 4. Create notification
+      await addDoc(collection(db, 'notifications'), {
+        userId: targetUserId,
+        fromUserId: user.uid,
+        fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
+        fromUserAvatar: currentUserData.avatar || '',
+        type: 'friend_accept',
+        text: 'accepted your friend request',
+        read: false,
+        createdAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Error accepting request:", error);
+    } finally {
+      setFriendshipLoading(false);
+    }
+  };
+
+  const handleMessage = () => {
+    if (!user || !targetUserId) return;
     
     // Switch to messages tab and select this chat
-    const friendshipId = [user?.uid, targetUserId].sort().join('_');
+    const chatId = [user.uid, targetUserId].sort().join('_');
     if (onOpenChat) {
-      onOpenChat(friendshipId);
+      onOpenChat(chatId);
     }
   };
 
@@ -757,43 +880,92 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
 
         {/* Action Buttons */}
-        <div className="grid grid-cols-2 gap-3 mt-8">
+        <div className="mt-8">
           {isOwnProfile ? (
-            <>
+            <div className="space-y-3">
               <button 
-                onClick={() => showToast('Dashboard coming soon')}
-                className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-lg shadow-primary/20"
+                onClick={() => setIsCreatePostOpen?.(true)}
+                className="w-full bg-primary text-white py-4 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-xl shadow-primary/25 flex items-center justify-center gap-3"
               >
-                Professional dashboard
+                <Plus className="w-5 h-5" /> Create Post
               </button>
-              <button 
-                onClick={() => setIsEditModalOpen(true)}
-                className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95"
-              >
-                Edit Profile
-              </button>
-            </>
+              <div className="grid grid-cols-2 gap-3">
+                <button 
+                  onClick={() => showToast('Dashboard coming soon')}
+                  className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95"
+                >
+                  Dashboard
+                </button>
+                <button 
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95"
+                >
+                  Edit Profile
+                </button>
+              </div>
+            </div>
           ) : (
-            <>
+            <div className="flex flex-col gap-3">
+              <div className={cn("grid gap-3", friendStatus === 'friends' ? "grid-cols-2" : "grid-cols-1")}>
+                {/* Friend Status Button */}
+                {friendStatus === 'friends' ? (
+                  <button 
+                    className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 flex items-center justify-center gap-2"
+                    onClick={() => showToast('Friendship options coming soon')}
+                  >
+                    <UserCheck className="w-4 h-4" /> Friends
+                  </button>
+                ) : friendStatus === 'sent' ? (
+                  <button 
+                    onClick={handleCancelRequest}
+                    disabled={friendshipLoading}
+                    className="bg-zinc-100 text-zinc-500 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />} Cancel
+                  </button>
+                ) : friendStatus === 'received' ? (
+                  <button 
+                    onClick={handleAcceptRequest}
+                    disabled={friendshipLoading}
+                    className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
+                  >
+                    {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Accept
+                  </button>
+                ) : (
+                  <button 
+                    onClick={handleAddFriend}
+                    disabled={friendshipLoading}
+                    className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
+                  >
+                    {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Add Friend
+                  </button>
+                )}
+
+                {/* Message Button */}
+                {friendStatus === 'friends' && (
+                  <button 
+                    onClick={handleMessage}
+                    className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
+                  >
+                    <MessageSquare className="w-4 h-4" /> Message
+                  </button>
+                )}
+              </div>
+
+              {/* Follow Button */}
               <button 
                 onClick={handleFollow}
                 disabled={followLoading}
                 className={cn(
-                  "py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg",
+                  "w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg",
                   isFollowing 
                     ? "bg-zinc-100 text-zinc-900 hover:bg-zinc-200" 
-                    : "bg-primary text-white hover:bg-indigo-700 shadow-primary/20"
+                    : "bg-zinc-900 text-white hover:bg-zinc-800 shadow-zinc-900/20"
                 )}
               >
                 {followLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : isFollowing ? 'Following' : 'Follow'}
               </button>
-              <button 
-                onClick={handleMessage}
-                className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 flex items-center justify-center gap-2"
-              >
-                <MessageSquare className="w-4 h-4" /> Message
-              </button>
-            </>
+            </div>
           )}
         </div>
         <div className="mt-3">

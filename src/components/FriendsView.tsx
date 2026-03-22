@@ -8,7 +8,8 @@ import {
   User, 
   Loader2,
   Check,
-  Clock
+  Clock,
+  MessageCircle
 } from 'lucide-react';
 import { db } from '../firebase';
 import { 
@@ -33,11 +34,14 @@ import { cn } from '../lib/utils';
 
 interface FriendsViewProps {
   onViewProfile: (userId: string) => void;
+  onOpenChat?: (chatId: string) => void;
 }
 
-export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
+export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenChat }) => {
   const { user, userData } = useUser();
+  const [activeTab, setActiveTab] = useState<'suggestions' | 'friends'>('suggestions');
   const [newUsers, setNewUsers] = useState<any[]>([]);
+  const [friends, setFriends] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
   const [sentRequestIds, setSentRequestIds] = useState<string[]>([]);
@@ -52,7 +56,7 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
     const usersQuery = query(
       collection(db, 'users'),
       orderBy('createdAt', 'desc'),
-      limit(20)
+      limit(50)
     );
 
     const unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
@@ -99,18 +103,28 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
       setSentRequestIds(ids);
     });
 
-    // Fetch friendships
+    // Fetch friendships and friend data
     const friendshipsQuery = query(
       collection(db, 'friendships'),
       where('uids', 'array-contains', user.uid)
     );
 
-    const unsubscribeFriendships = onSnapshot(friendshipsQuery, (snapshot) => {
+    const unsubscribeFriendships = onSnapshot(friendshipsQuery, async (snapshot) => {
       const ids = snapshot.docs.map(doc => {
         const data = doc.data();
         return data.uids.find((id: string) => id !== user.uid);
       });
       setFriendIds(ids);
+
+      // Fetch friend details
+      const friendDetails = [];
+      for (const friendId of ids) {
+        const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
+        if (!friendDoc.empty) {
+          friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+        }
+      }
+      setFriends(friendDetails);
     });
 
     return () => {
@@ -120,6 +134,12 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
       unsubscribeFriendships();
     };
   }, [user]);
+
+  const handleMessage = (friendId: string) => {
+    if (!user || !onOpenChat) return;
+    const chatId = [user.uid, friendId].sort().join('_');
+    onOpenChat(chatId);
+  };
 
   const handleAddFriend = async (targetUserId: string) => {
     if (!user || !userData) return;
@@ -229,10 +249,22 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
         </div>
         
         <div className="flex gap-3">
-          <button className="bg-primary text-white px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-primary/20 active:scale-95 transition-all">
+          <button 
+            onClick={() => setActiveTab('suggestions')}
+            className={cn(
+              "px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95",
+              activeTab === 'suggestions' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
+            )}
+          >
             Suggestions
           </button>
-          <button className="bg-zinc-100 text-zinc-900 px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 active:scale-95 transition-all">
+          <button 
+            onClick={() => setActiveTab('friends')}
+            className={cn(
+              "px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95",
+              activeTab === 'friends' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
+            )}
+          >
             Your Friends
           </button>
         </div>
@@ -240,7 +272,9 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
 
       {/* Main Content */}
       <div className="px-4 space-y-6">
-        {/* Friend Requests Section */}
+        {activeTab === 'suggestions' ? (
+          <>
+            {/* Friend Requests Section */}
         <div className="space-y-4">
           <div className="flex justify-between items-center px-2">
             <h3 className="text-lg font-black text-zinc-900 tracking-tight">Friend Requests</h3>
@@ -360,8 +394,11 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
 
                       <div className="flex flex-col gap-2">
                         {isFriend ? (
-                          <button className="bg-emerald-50 text-emerald-600 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 cursor-default">
-                            <UserCheck className="w-3 h-3" /> Friends
+                          <button 
+                            onClick={() => handleMessage(u.id)}
+                            className="bg-emerald-50 text-emerald-600 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-100 transition-all active:scale-95"
+                          >
+                            <MessageCircle className="w-3 h-3" /> Message
                           </button>
                         ) : isSent ? (
                           <button className="bg-zinc-100 text-zinc-500 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 cursor-default">
@@ -404,6 +441,88 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile }) => {
             </div>
           )}
         </div>
+        </>
+      ) : (
+        <div className="space-y-4">
+            <div className="flex justify-between items-center px-2">
+              <h3 className="text-lg font-black text-zinc-900 tracking-tight">Your Friends</h3>
+              <span className="bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
+                {friends.length} Total
+              </span>
+            </div>
+
+            {friends.length === 0 ? (
+              <div className="bg-white rounded-[2.5rem] p-12 shadow-sm border border-zinc-100 flex flex-col items-center justify-center text-center gap-4">
+                <div className="w-20 h-20 bg-zinc-50 rounded-[2rem] flex items-center justify-center shadow-inner">
+                  <User className="w-10 h-10 text-zinc-200" />
+                </div>
+                <div>
+                  <p className="text-zinc-900 font-black text-lg">No friends yet</p>
+                  <p className="text-zinc-400 text-sm font-medium mt-1">Start connecting with people to see them here!</p>
+                </div>
+                <button 
+                  onClick={() => setActiveTab('suggestions')}
+                  className="mt-4 bg-primary text-white px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-primary/20 active:scale-95 transition-all"
+                >
+                  Find Friends
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3">
+                {friends
+                  .filter(f => 
+                    `${f.firstName} ${f.lastName}`.toLowerCase().includes(searchQuery.toLowerCase())
+                  )
+                  .map((f) => (
+                    <div 
+                      key={f.id}
+                      className="bg-white p-4 rounded-[2rem] shadow-sm border border-zinc-100 flex items-center gap-4 group hover:shadow-md transition-all"
+                    >
+                      <div 
+                        onClick={() => onViewProfile(f.id)}
+                        className="w-16 h-16 rounded-2xl overflow-hidden bg-zinc-100 flex-shrink-0 cursor-pointer border-2 border-white shadow-sm"
+                      >
+                        {f.avatar ? (
+                          <img src={f.avatar} alt={f.firstName} className="w-full h-full object-cover" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center">
+                            <User className="w-8 h-8 text-zinc-300" />
+                          </div>
+                        )}
+                      </div>
+                      
+                      <div className="flex-1 min-w-0">
+                        <h4 
+                          onClick={() => onViewProfile(f.id)}
+                          className="font-black text-zinc-900 truncate cursor-pointer hover:text-primary transition-colors"
+                        >
+                          {f.firstName} {f.lastName}
+                        </h4>
+                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-0.5">
+                          {f.category || 'Friend'}
+                        </p>
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={() => handleMessage(f.id)}
+                          className="bg-primary text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/15 active:scale-95 transition-all flex items-center gap-2"
+                        >
+                          <MessageCircle className="w-3 h-3" /> Message
+                        </button>
+                        <button 
+                          onClick={() => onViewProfile(f.id)}
+                          className="bg-zinc-100 text-zinc-600 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-200 active:scale-95 transition-all"
+                        >
+                          Profile
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

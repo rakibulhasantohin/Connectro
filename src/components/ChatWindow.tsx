@@ -29,7 +29,9 @@ import {
   doc, 
   updateDoc,
   serverTimestamp,
-  setDoc
+  setDoc,
+  getDoc,
+  increment
 } from 'firebase/firestore';
 
 interface Message {
@@ -47,6 +49,7 @@ interface ChatWindowProps {
 
 export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBack }) => {
   const { user } = useUser();
+  const [otherUserData, setOtherUserData] = useState<any>(otherUser);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -56,6 +59,32 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
+  // Fetch other user data if not provided
+  useEffect(() => {
+    if (otherUser) {
+      setOtherUserData(otherUser);
+      return;
+    }
+
+    if (!chatId || !user) return;
+
+    const fetchOtherUser = async () => {
+      try {
+        const otherUserId = chatId.split('_').find(id => id !== user.uid);
+        if (otherUserId) {
+          const userDoc = await getDoc(doc(db, 'users', otherUserId));
+          if (userDoc.exists()) {
+            setOtherUserData(userDoc.data());
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching other user:", error);
+      }
+    };
+
+    fetchOtherUser();
+  }, [chatId, otherUser, user]);
 
   useEffect(() => {
     if (!chatId) return;
@@ -81,9 +110,13 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
     // Mark as read
     if (user) {
       const chatRef = doc(db, 'chats', chatId);
-      updateDoc(chatRef, {
-        [`unreadCount.${user.uid}`]: 0
-      }).catch(err => console.error("Error marking as read:", err));
+      getDoc(chatRef).then(docSnap => {
+        if (docSnap.exists()) {
+          updateDoc(chatRef, {
+            [`unreadCount.${user.uid}`]: 0
+          }).catch(err => console.error("Error marking as read:", err));
+        }
+      });
     }
 
     return () => unsubscribe();
@@ -91,13 +124,29 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || !user || sending) return;
+    if (!inputText.trim() || !user || !otherUserData || sending) return;
 
     setSending(true);
     const text = inputText.trim();
     setInputText('');
 
     try {
+      // Ensure chat document exists
+      const chatRef = doc(db, 'chats', chatId);
+      const chatSnap = await getDoc(chatRef);
+      
+      if (!chatSnap.exists()) {
+        await setDoc(chatRef, {
+          participants: [user.uid, chatId.split('_').find(id => id !== user.uid)],
+          lastMessage: text,
+          lastMessageAt: serverTimestamp(),
+          unreadCount: {
+            [user.uid]: 0,
+            [chatId.split('_').find(id => id !== user.uid) || '']: 1
+          }
+        });
+      }
+
       const messageData = {
         senderId: user.uid,
         text,
@@ -107,12 +156,14 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
       await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
 
       // Update chat metadata
-      const chatRef = doc(db, 'chats', chatId);
-      await updateDoc(chatRef, {
-        lastMessage: text,
-        lastMessageAt: serverTimestamp(),
-        [`unreadCount.${otherUser.uid}`]: (otherUser.unreadCount?.[otherUser.uid] || 0) + 1
-      });
+      const otherUserId = chatId.split('_').find(id => id !== user.uid);
+      if (otherUserId) {
+        await updateDoc(chatRef, {
+          lastMessage: text,
+          lastMessageAt: serverTimestamp(),
+          [`unreadCount.${otherUserId}`]: increment(1)
+        });
+      }
 
       scrollToBottom();
     } catch (error) {
@@ -139,8 +190,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
           <div className="flex items-center gap-3 cursor-pointer group">
             <div className="relative">
               <div className="w-10 h-10 rounded-full overflow-hidden border border-zinc-100 group-hover:scale-105 transition-transform">
-                {otherUser?.avatar ? (
-                  <img src={otherUser.avatar} alt="User" className="w-full h-full object-cover" />
+                {otherUserData?.avatar ? (
+                  <img src={otherUserData.avatar} alt="User" className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
                     <User className="w-5 h-5 text-zinc-300" />
@@ -150,7 +201,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
               <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
             </div>
             <div>
-              <h4 className="text-sm font-black text-zinc-900 tracking-tight leading-none mb-1">{otherUser?.firstName} {otherUser?.lastName}</h4>
+              <h4 className="text-sm font-black text-zinc-900 tracking-tight leading-none mb-1">{otherUserData?.firstName} {otherUserData?.lastName}</h4>
               <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest leading-none">Active now</p>
             </div>
           </div>
@@ -172,15 +223,15 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
         ) : messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-10 text-center px-10">
             <div className="w-20 h-20 rounded-full overflow-hidden mb-4 border-4 border-white shadow-xl">
-              {otherUser?.avatar ? (
-                <img src={otherUser.avatar} alt="User" className="w-full h-full object-cover" />
+              {otherUserData?.avatar ? (
+                <img src={otherUserData.avatar} alt="User" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
                   <User className="w-8 h-8 text-zinc-300" />
                 </div>
               )}
             </div>
-            <h3 className="text-xl font-black text-zinc-900 tracking-tighter mb-1">{otherUser?.firstName} {otherUser?.lastName}</h3>
+            <h3 className="text-xl font-black text-zinc-900 tracking-tighter mb-1">{otherUserData?.firstName} {otherUserData?.lastName}</h3>
             <p className="text-zinc-400 text-[10px] font-black uppercase tracking-widest mb-6">You're friends on Connectro</p>
             <button className="bg-zinc-100 text-zinc-900 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-all">View Profile</button>
           </div>
@@ -197,8 +248,8 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
                 {!isMe && (
                   <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 mt-auto mb-1">
                     {showAvatar ? (
-                      otherUser?.avatar ? (
-                        <img src={otherUser.avatar} alt="User" className="w-full h-full object-cover" />
+                      otherUserData?.avatar ? (
+                        <img src={otherUserData.avatar} alt="User" className="w-full h-full object-cover" />
                       ) : (
                         <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
                           <User className="w-4 h-4 text-zinc-300" />

@@ -83,7 +83,12 @@ function AppContent() {
             />
           )}
           {currentTab === 'reels' && <ReelsView />}
-          {currentTab === 'friends' && <FriendsView onViewProfile={handleViewProfile} />}
+          {currentTab === 'friends' && (
+            <FriendsView 
+              onViewProfile={handleViewProfile} 
+              onOpenChat={handleOpenChat}
+            />
+          )}
           {currentTab === 'groups' && <GroupsView />}
           {currentTab === 'dashboard' && <DashboardView />}
           {currentTab === 'notifications' && <NotificationsView />}
