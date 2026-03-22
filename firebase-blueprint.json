@@ -1,0 +1,181 @@
+{
+  "entities": {
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification for likes, comments, shares, and friend actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "toUserId": { "type": "string", "description": "UID of the user receiving the notification" },
+        "fromUserId": { "type": "string", "description": "UID of the user who performed the action" },
+        "fromUserName": { "type": "string" },
+        "fromUserAvatar": { "type": "string" },
+        "type": { "type": "string", "enum": ["like", "comment", "share", "follow", "love", "haha", "wow", "angry", "friend_request", "friend_accept"] },
+        "postId": { "type": "string", "description": "ID of the post the action was performed on" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "read": { "type": "boolean" }
+      },
+      "required": ["toUserId", "fromUserId", "fromUserName", "type", "createdAt"]
+    },
+    "Friendship": {
+      "title": "Friendship",
+      "description": "Established friendship between two users",
+      "type": "object",
+      "properties": {
+        "userIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userIds", "createdAt"]
+    },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Pending friend request",
+      "type": "object",
+      "properties": {
+        "fromUserId": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["fromUserId", "toUserId", "status", "createdAt"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "Conversation between two users",
+      "type": "object",
+      "properties": {
+        "participants": { "type": "array", "items": { "type": "string" } },
+        "lastMessage": { "type": "string" },
+        "lastMessageAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["participants", "updatedAt"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Single message in a chat",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderId", "text", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email" },
+        "phoneNumber": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "dob": { "type": "string", "format": "date" },
+        "avatar": { "type": "string", "description": "Profile photo URL" },
+        "cover": { "type": "string", "description": "Cover photo URL" },
+        "college": { "type": "string" },
+        "work": { "type": "string" },
+        "location": { "type": "string" },
+        "hometown": { "type": "string" },
+        "bio": { "type": "string" },
+        "category": { "type": "string" },
+        "instagram": { "type": "string" },
+        "hobbies": { "type": "array", "items": { "type": "string" } },
+        "interests": { "type": "array", "items": { "type": "string" } },
+        "followers": { "type": "number" },
+        "following": { "type": "number" },
+        "postCount": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "onboardingCompleted": { "type": "boolean" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Post": {
+      "title": "Post",
+      "description": "User post",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "text": { "type": "string" },
+        "image": { "type": "string" },
+        "privacy": { "type": "string", "enum": ["Public", "Friends", "Only Me"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "likes": { "type": "number" },
+        "comments": { "type": "number" },
+        "shares": { "type": "number" }
+      },
+      "required": ["userId", "userName", "text", "createdAt"]
+    },
+    "Story": {
+      "title": "Story",
+      "description": "User story",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "image": { "type": "string" },
+        "music": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "image", "createdAt"]
+    },
+    "Reaction": {
+      "title": "Reaction",
+      "description": "User reaction to a post",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "userAvatar": { "type": "string" },
+        "type": { "type": "string", "enum": ["like", "love", "haha", "wow", "angry"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "type", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "posts/{postId}": {
+      "schema": "Post",
+      "description": "User posts"
+    },
+    "posts/{postId}/reactions/{reactionId}": {
+      "schema": "Reaction",
+      "description": "User reactions to posts"
+    },
+    "stories/{storyId}": {
+      "schema": "Story",
+      "description": "User stories"
+    },
+    "notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
+    },
+    "friendships/{friendshipId}": {
+      "schema": "Friendship",
+      "description": "Established friendships"
+    },
+    "friendRequests/{requestId}": {
+      "schema": "FriendRequest",
+      "description": "Pending friend requests"
+    },
+    "chats/{chatId}": {
+      "schema": "Chat",
+      "description": "Conversations"
+    },
+    "chats/{chatId}/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Messages in a conversation"
+    }
+  }
+}
