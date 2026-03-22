@@ -48,6 +48,40 @@ interface MessagesViewProps {
   setSelectedChatId: (chatId: string | null) => void;
 }
 
+const TimeAgo: React.FC<{ timestamp: any }> = ({ timestamp }) => {
+  const [timeAgo, setTimeAgo] = useState('');
+
+  useEffect(() => {
+    const updateTime = () => {
+      if (!timestamp) {
+        setTimeAgo('');
+        return;
+      }
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      const now = new Date();
+      const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
+      
+      if (diffInSeconds < 60) {
+        setTimeAgo(`${diffInSeconds}s`);
+      } else if (diffInSeconds < 3600) {
+        setTimeAgo(`${Math.floor(diffInSeconds / 60)}m`);
+      } else if (diffInSeconds < 86400) {
+        setTimeAgo(`${Math.floor(diffInSeconds / 3600)}h`);
+      } else if (diffInSeconds < 604800) {
+        setTimeAgo(`${Math.floor(diffInSeconds / 86400)}d`);
+      } else {
+        setTimeAgo(date.toLocaleDateString());
+      }
+    };
+
+    updateTime();
+    const interval = setInterval(updateTime, 10000);
+    return () => clearInterval(interval);
+  }, [timestamp]);
+
+  return <span>{timeAgo}</span>;
+};
+
 export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selectedChatId, setSelectedChatId }) => {
   const { user } = useUser();
   const [chats, setChats] = useState<Chat[]>([]);
@@ -126,18 +160,6 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
     
     return () => unsubscribe();
   }, [user]);
-
-  const formatTime = (timestamp: any) => {
-    if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    const now = new Date();
-    const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-    
-    if (diffInSeconds < 60) return 'Just now';
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
-    return date.toLocaleDateString();
-  };
 
   if (selectedChatId) {
     const chat = chats.find(c => c.id === selectedChatId);
@@ -268,7 +290,9 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center mb-0.5">
                     <h4 className="font-black text-zinc-900 tracking-tight truncate">{chat.otherUser?.firstName} {chat.otherUser?.lastName}</h4>
-                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">{formatTime(chat.lastMessageAt)}</span>
+                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
+                      <TimeAgo timestamp={chat.lastMessageAt} />
+                    </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <p className={cn(

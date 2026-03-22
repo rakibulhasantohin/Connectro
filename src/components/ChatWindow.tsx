@@ -47,6 +47,40 @@ interface ChatWindowProps {
   onBack: () => void;
 }
 
+const TimeAgo: React.FC<{ timestamp: any }> = ({ timestamp }) => {
+  const [timeAgo, setTimeAgo] = useState('');
+
+  useEffect(() => {
+    const updateTime = () => {
+      if (!timestamp) {
+        setTimeAgo('Just now');
+        return;
+      }
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      const now = new Date();
+      const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
+      
+      if (diffInSeconds < 60) {
+        setTimeAgo(`${diffInSeconds}s ago`);
+      } else if (diffInSeconds < 3600) {
+        setTimeAgo(`${Math.floor(diffInSeconds / 60)}m ago`);
+      } else if (diffInSeconds < 86400) {
+        setTimeAgo(`${Math.floor(diffInSeconds / 3600)}h ago`);
+      } else if (diffInSeconds < 604800) {
+        setTimeAgo(`${Math.floor(diffInSeconds / 86400)}d ago`);
+      } else {
+        setTimeAgo(date.toLocaleDateString());
+      }
+    };
+
+    updateTime();
+    const interval = setInterval(updateTime, 10000); // Update every 10 seconds
+    return () => clearInterval(interval);
+  }, [timestamp]);
+
+  return <span>{timeAgo}</span>;
+};
+
 export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBack }) => {
   const { user } = useUser();
   const [otherUserData, setOtherUserData] = useState<any>(otherUser);
@@ -148,6 +182,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
             [otherUserId]: 1
           }
         });
+      } else {
+        await updateDoc(chatRef, {
+          lastMessage: text,
+          lastMessageAt: serverTimestamp(),
+          [`unreadCount.${otherUserId}`]: increment(1)
+        });
       }
 
       const messageData = {
@@ -158,25 +198,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
 
       await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
 
-      // Update chat metadata
-      await updateDoc(chatRef, {
-        lastMessage: text,
-        lastMessageAt: serverTimestamp(),
-        [`unreadCount.${otherUserId}`]: increment(1)
-      });
-
       scrollToBottom();
     } catch (error) {
       console.error("Error sending message:", error);
     } finally {
       setSending(false);
     }
-  };
-
-  const formatTime = (timestamp: any) => {
-    if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -267,11 +294,17 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
                   )}>
                     {msg.text}
                   </div>
-                  {idx === messages.length - 1 && isMe && (
-                    <div className="flex justify-end pr-1">
+                  <div className={cn(
+                    "flex items-center gap-1 px-1",
+                    isMe ? "justify-end" : "justify-start"
+                  )}>
+                    <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                      <TimeAgo timestamp={msg.createdAt} />
+                    </span>
+                    {idx === messages.length - 1 && isMe && (
                       <CheckCheck className="w-3 h-3 text-primary" />
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               </div>
             );

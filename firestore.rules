@@ -110,7 +110,7 @@ service cloud.firestore {
 
     function isValidChat(data) {
       return data.participants is list && data.participants.size() == 2 &&
-             (data.updatedAt is timestamp || data.updatedAt is string);
+             (data.lastMessageAt is timestamp || data.lastMessageAt is string);
     }
 
     function isValidMessage(data) {
