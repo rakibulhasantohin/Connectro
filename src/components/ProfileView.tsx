@@ -45,7 +45,7 @@ import Markdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
 import { db } from '../firebase';
-import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp, serverTimestamp, getDocs } from 'firebase/firestore';
 import { PostCard } from './PostCard';
 import { motion, AnimatePresence } from 'motion/react';
 import { MUSIC_OPTIONS } from '../constants';
@@ -229,16 +229,42 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     return () => unsubscribe();
   }, [targetUserId, user?.uid]);
 
-  // Fetch some random users as "Friends" for now
+  // Fetch real friends
   useEffect(() => {
-    const q = query(collection(db, 'users'), where('onboardingCompleted', '==', true), limit(6));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const usersData = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(u => u.id !== (targetUserId || user?.uid)); // Don't show current profile user in friends list
-      setFriends(usersData);
+    const uid = targetUserId || user?.uid;
+    if (!uid) return;
+
+    const friendshipsQuery = query(
+      collection(db, 'friendships'),
+      where('uids', 'array-contains', uid)
+    );
+
+    const unsubscribe = onSnapshot(friendshipsQuery, async (snapshot) => {
+      const ids = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return data.uids.find((id: string) => id !== uid);
+      }).filter(Boolean);
+
+      if (ids.length === 0) {
+        setFriends([]);
+        setFriendsLoading(false);
+        return;
+      }
+
+      // Fetch friend details (limit to 6 for profile view)
+      const friendDetails = [];
+      const idsToFetch = ids.slice(0, 6);
+      
+      for (const friendId of idsToFetch) {
+        const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
+        if (!friendDoc.empty) {
+          friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+        }
+      }
+      setFriends(friendDetails);
       setFriendsLoading(false);
     });
+
     return () => unsubscribe();
   }, [targetUserId, user?.uid]);
 

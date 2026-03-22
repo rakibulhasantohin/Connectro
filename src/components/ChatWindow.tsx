@@ -124,25 +124,28 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!inputText.trim() || !user || !otherUserData || sending) return;
+    if (!inputText.trim() || !user || sending) return;
 
     setSending(true);
     const text = inputText.trim();
     setInputText('');
 
     try {
+      const otherUserId = chatId.split('_').find(id => id !== user.uid);
+      if (!otherUserId) throw new Error("Could not determine other user ID");
+
       // Ensure chat document exists
       const chatRef = doc(db, 'chats', chatId);
       const chatSnap = await getDoc(chatRef);
       
       if (!chatSnap.exists()) {
         await setDoc(chatRef, {
-          participants: [user.uid, chatId.split('_').find(id => id !== user.uid)],
+          participants: [user.uid, otherUserId],
           lastMessage: text,
           lastMessageAt: serverTimestamp(),
           unreadCount: {
             [user.uid]: 0,
-            [chatId.split('_').find(id => id !== user.uid) || '']: 1
+            [otherUserId]: 1
           }
         });
       }
@@ -156,14 +159,11 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
       await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
 
       // Update chat metadata
-      const otherUserId = chatId.split('_').find(id => id !== user.uid);
-      if (otherUserId) {
-        await updateDoc(chatRef, {
-          lastMessage: text,
-          lastMessageAt: serverTimestamp(),
-          [`unreadCount.${otherUserId}`]: increment(1)
-        });
-      }
+      await updateDoc(chatRef, {
+        lastMessage: text,
+        lastMessageAt: serverTimestamp(),
+        [`unreadCount.${otherUserId}`]: increment(1)
+      });
 
       scrollToBottom();
     } catch (error) {

@@ -95,13 +95,33 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
   useEffect(() => {
     if (!user) return;
     
-    // For now, just show some users who have onboarding completed
-    const q = query(collection(db, 'users'), where('onboardingCompleted', '==', true), limit(10));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const users = snapshot.docs
-        .map(doc => ({ id: doc.id, ...doc.data() }))
-        .filter(u => u.id !== user.uid);
-      setActiveUsers(users);
+    const friendshipsQuery = query(
+      collection(db, 'friendships'),
+      where('uids', 'array-contains', user.uid)
+    );
+
+    const unsubscribe = onSnapshot(friendshipsQuery, async (snapshot) => {
+      const ids = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return data.uids.find((id: string) => id !== user.uid);
+      }).filter(Boolean);
+
+      if (ids.length === 0) {
+        setActiveUsers([]);
+        return;
+      }
+
+      // Fetch friend details
+      const friendDetails = [];
+      const idsToFetch = ids.slice(0, 10); // Limit to 10 for active users bar
+      
+      for (const friendId of idsToFetch) {
+        const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
+        if (!friendDoc.empty) {
+          friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+        }
+      }
+      setActiveUsers(friendDetails);
     });
     
     return () => unsubscribe();
@@ -182,7 +202,14 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Your note</span>
           </div>
           {activeUsers.map((u) => (
-            <div key={u.id} className="flex flex-col items-center gap-2 shrink-0 cursor-pointer group">
+            <div 
+              key={u.id} 
+              onClick={() => {
+                const chatId = [user?.uid, u.id].sort().join('_');
+                setSelectedChatId(chatId);
+              }}
+              className="flex flex-col items-center gap-2 shrink-0 cursor-pointer group"
+            >
               <div className="w-16 h-16 rounded-full p-0.5 border-2 border-primary group-hover:scale-105 transition-transform">
                 <div className="w-full h-full rounded-full overflow-hidden border-2 border-white relative">
                   {u.avatar ? (
