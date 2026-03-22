@@ -156,7 +156,7 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
 
       // Create notification
       await addDoc(collection(db, 'notifications'), {
-        userId: targetUserId,
+        toUserId: targetUserId,
         fromUserId: user.uid,
         fromUserName: `${userData.firstName} ${userData.lastName}`,
         fromUserAvatar: userData.avatar || '',
@@ -200,7 +200,7 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
 
       // 4. Create notification
       await addDoc(collection(db, 'notifications'), {
-        userId: request.fromUserId,
+        toUserId: request.fromUserId,
         fromUserId: user.uid,
         fromUserName: `${userData?.firstName} ${userData?.lastName}`,
         fromUserAvatar: userData?.avatar || '',

@@ -329,6 +329,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     setFriendshipLoading(true);
     const friendshipId = [user.uid, targetUserId].sort().join('_');
     
+    let unsubOutgoing: () => void;
+    let unsubIncoming: () => void;
+
     // Listen for friendship
     const unsubFriendship = onSnapshot(doc(db, 'friendships', friendshipId), (fDoc) => {
       if (fDoc.exists()) {
@@ -341,7 +344,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           where('fromUserId', '==', user.uid),
           where('toUserId', '==', targetUserId)
         );
-        const unsubOutgoing = onSnapshot(qOutgoing, (outSnap) => {
+        unsubOutgoing = onSnapshot(qOutgoing, (outSnap) => {
           if (!outSnap.empty) {
             setFriendStatus('sent');
             setRequestId(outSnap.docs[0].id);
@@ -353,7 +356,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               where('fromUserId', '==', targetUserId),
               where('toUserId', '==', user.uid)
             );
-            const unsubIncoming = onSnapshot(qIncoming, (inSnap) => {
+            unsubIncoming = onSnapshot(qIncoming, (inSnap) => {
               if (!inSnap.empty) {
                 setFriendStatus('received');
                 setRequestId(inSnap.docs[0].id);
@@ -363,14 +366,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               }
               setFriendshipLoading(false);
             });
-            return () => unsubIncoming();
           }
         });
-        return () => unsubOutgoing();
       }
     });
 
-    return () => unsubFriendship();
+    // Listen for follow status
+    const followId = `${user.uid}_${targetUserId}`;
+    const unsubFollow = onSnapshot(doc(db, 'follows', followId), (docSnap) => {
+      setIsFollowing(docSnap.exists());
+    });
+
+    return () => {
+      unsubFriendship();
+      if (unsubOutgoing) unsubOutgoing();
+      if (unsubIncoming) unsubIncoming();
+      unsubFollow();
+    };
   }, [user, targetUserId, isOwnProfile]);
 
   const handleAddFriend = async () => {
@@ -386,7 +398,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       // Create notification
       await addDoc(collection(db, 'notifications'), {
-        userId: targetUserId,
+        toUserId: targetUserId,
         fromUserId: user.uid,
         fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
         fromUserAvatar: currentUserData.avatar || '',
@@ -441,7 +453,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       // 4. Create notification
       await addDoc(collection(db, 'notifications'), {
-        userId: targetUserId,
+        toUserId: targetUserId,
         fromUserId: user.uid,
         fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
         fromUserAvatar: currentUserData.avatar || '',
@@ -932,7 +944,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              <div className={cn("grid gap-3", friendStatus === 'friends' ? "grid-cols-2" : "grid-cols-1")}>
+              <div className="grid grid-cols-2 gap-3">
                 {/* Friend Status Button */}
                 {friendStatus === 'friends' ? (
                   <button 
@@ -968,14 +980,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 )}
 
                 {/* Message Button */}
-                {friendStatus === 'friends' && (
-                  <button 
-                    onClick={handleMessage}
-                    className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
-                  >
-                    <MessageSquare className="w-4 h-4" /> Message
-                  </button>
-                )}
+                <button 
+                  onClick={handleMessage}
+                  className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
+                >
+                  <MessageSquare className="w-4 h-4" /> Message
+                </button>
               </div>
 
               {/* Follow Button */}
