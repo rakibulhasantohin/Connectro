@@ -35,6 +35,9 @@ export const AuthView: React.FC = () => {
           displayName: user.displayName,
           avatar: user.photoURL,
           onboardingCompleted: false,
+          followers: 0,
+          following: 0,
+          postCount: 0,
           createdAt: new Date().toISOString()
         });
       }
@@ -70,6 +73,9 @@ export const AuthView: React.FC = () => {
           lastName: lastName || '',
           displayName: fullName,
           onboardingCompleted: false,
+          followers: 0,
+          following: 0,
+          postCount: 0,
           createdAt: new Date().toISOString()
         });
       }

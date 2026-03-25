@@ -557,12 +557,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const currentUserRef = doc(db, 'users', user.uid);
     const targetUserRef = doc(db, 'users', targetUserId);
 
+    console.log("Attempting to toggle follow:", { followId, isFollowing });
+
     try {
       if (isFollowing) {
         // Unfollow
         await deleteDoc(followRef);
         await updateDoc(currentUserRef, { following: increment(-1) });
         await updateDoc(targetUserRef, { followers: increment(-1) });
+        console.log("Unfollowed successfully");
       } else {
         // Follow
         await setDoc(followRef, {
@@ -572,6 +575,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         });
         await updateDoc(currentUserRef, { following: increment(1) });
         await updateDoc(targetUserRef, { followers: increment(1) });
+        console.log("Followed successfully");
         
         // Create notification
         await addDoc(collection(db, 'notifications'), {
@@ -587,6 +591,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       }
     } catch (err) {
       console.error("Error toggling follow:", err);
+      handleFirestoreError(err, OperationType.WRITE, `follows/${followId}`);
     } finally {
       setFollowLoading(false);
     }
@@ -982,14 +987,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="flex items-center justify-center gap-8">
             <div className="text-center">
               <div className="text-xl font-bold text-primary">
-                {displayData?.followers >= 1000 ? `${(displayData.followers / 1000).toFixed(1)}k` : (displayData?.followers || '12.4k')}
+                {displayData?.followers >= 1000 ? `${(displayData.followers / 1000).toFixed(1)}k` : (displayData?.followers || 0)}
               </div>
               <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Followers</div>
             </div>
             <div className="w-px h-8 bg-zinc-200"></div>
             <div className="text-center">
               <div className="text-xl font-bold text-primary">
-                {displayData?.following || '842'}
+                {displayData?.following || 0}
               </div>
               <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Following</div>
             </div>

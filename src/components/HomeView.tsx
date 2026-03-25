@@ -55,6 +55,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const storyInputRef = useRef<HTMLInputElement>(null);
   const postInputRef = useRef<HTMLInputElement>(null);
   const storyIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [feedTab, setFeedTab] = useState<'for-you' | 'following'>('for-you');
+  const [followingIds, setFollowingIds] = useState<string[]>([]);
+
+  // Fetch following IDs
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'follows'), where('followerId', '==', user.uid));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const ids = snapshot.docs.map(doc => doc.data().followingId);
+      setFollowingIds(ids);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'follows');
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   // Fetch stories from Firestore
   useEffect(() => {
@@ -244,6 +259,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   const activeStory = activeStoryIndex !== null ? stories[activeStoryIndex] : null;
 
+  const filteredPosts = feedTab === 'for-you' 
+    ? posts 
+    : posts.filter(post => followingIds.includes(post.userId) || post.userId === user?.uid);
+
   return (
     <div 
       className="flex flex-col gap-3 bg-zinc-50 pb-4 relative"
@@ -257,6 +276,34 @@ export const HomeView: React.FC<HomeViewProps> = ({
         className="hidden" 
         accept="image/*,video/*"
       />
+      {/* Feed Tabs */}
+      <div className="px-6 py-4 bg-white border-b border-zinc-100 flex gap-6 sticky top-0 z-40">
+        <button 
+          onClick={() => setFeedTab('for-you')}
+          className={cn(
+            "text-xs font-black uppercase tracking-widest transition-all relative pb-2",
+            feedTab === 'for-you' ? "text-primary" : "text-zinc-400"
+          )}
+        >
+          For You
+          {feedTab === 'for-you' && (
+            <motion.div layoutId="feedTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+          )}
+        </button>
+        <button 
+          onClick={() => setFeedTab('following')}
+          className={cn(
+            "text-xs font-black uppercase tracking-widest transition-all relative pb-2",
+            feedTab === 'following' ? "text-primary" : "text-zinc-400"
+          )}
+        >
+          Following
+          {feedTab === 'following' && (
+            <motion.div layoutId="feedTab" className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+          )}
+        </button>
+      </div>
+
       {/* Stories Section Redesign */}
       <section className="bg-zinc-50 pt-6 pb-6 px-6 overflow-x-auto no-scrollbar shadow-sm">
         <div className="flex gap-6">
@@ -525,8 +572,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <Loader2 className="w-10 h-10 text-primary animate-spin" />
             <span className="text-zinc-500 font-black text-sm uppercase tracking-widest">Connectro Feed Loading</span>
           </div>
-        ) : posts.length > 0 ? (
-          posts.map(post => (
+        ) : filteredPosts.length > 0 ? (
+          filteredPosts.map(post => (
             <PostCard key={post.id} post={post} onViewProfile={onViewProfile} />
           ))
         ) : (
@@ -535,8 +582,14 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <Globe className="w-10 h-10 text-zinc-200" />
             </div>
             <div>
-              <h3 className="text-xl font-black text-zinc-900">Your Connectro is Empty</h3>
-              <p className="text-zinc-400 max-w-[250px] mx-auto mt-2 font-medium">Follow some creators or share your first moment to build your feed.</p>
+              <h3 className="text-xl font-black text-zinc-900">
+                {feedTab === 'following' ? 'No Signals from Following' : 'Your Connectro is Empty'}
+              </h3>
+              <p className="text-zinc-400 max-w-[250px] mx-auto mt-2 font-medium">
+                {feedTab === 'following' 
+                  ? "You haven't followed anyone yet, or they haven't posted signals." 
+                  : "Follow some creators or share your first moment to build your feed."}
+              </p>
             </div>
             <button 
               onClick={() => setTab('dashboard')}
