@@ -57,6 +57,11 @@ service cloud.firestore {
              (!('postCount' in data) || data.postCount is number);
     }
 
+    function isValidSavedPost(data) {
+      return data.postId is string &&
+             (data.savedAt is timestamp || data.savedAt is string);
+    }
+
     function isValidNotification(data) {
       return data.toUserId is string &&
              data.fromUserId is string &&
@@ -97,7 +102,7 @@ service cloud.firestore {
     }
 
     function isValidFriendship(data) {
-      return data.userIds is list && data.userIds.size() == 2 &&
+      return data.uids is list && data.uids.size() == 2 &&
              (data.createdAt is timestamp || data.createdAt is string);
     }
 
@@ -140,6 +145,12 @@ service cloud.firestore {
       );
                     
       allow delete: if false; // Users cannot delete their accounts for now
+
+      match /savedPosts/{postId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidSavedPost(request.resource.data);
+        allow delete: if isOwner(userId);
+      }
     }
 
     match /posts/{postId} {
@@ -183,10 +194,10 @@ service cloud.firestore {
     }
 
     match /friendships/{friendshipId} {
-      allow read: if isAuthenticated() && request.auth.uid in resource.data.userIds;
-      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.userIds && isValidFriendship(request.resource.data);
-      allow update: if isAuthenticated() && request.auth.uid in resource.data.userIds && isValidFriendship(request.resource.data);
-      allow delete: if isAuthenticated() && request.auth.uid in resource.data.userIds;
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.uids && isValidFriendship(request.resource.data);
+      allow update: if isAuthenticated() && request.auth.uid in resource.data.uids && isValidFriendship(request.resource.data);
+      allow delete: if isAuthenticated() && request.auth.uid in resource.data.uids;
     }
 
     match /friendRequests/{requestId} {

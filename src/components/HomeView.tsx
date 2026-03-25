@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
 import { TabType } from '../data/dummy';
 import { PostCard } from './PostCard';
@@ -74,7 +74,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       setStories(storiesData);
       setLoadingStories(false);
     }, (error) => {
-      console.error("Error fetching stories:", error);
+      handleFirestoreError(error, OperationType.LIST, 'stories');
       setLoadingStories(false);
     });
 
@@ -99,7 +99,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
       setPosts(postsData);
       setLoadingPosts(false);
     }, (error) => {
-      console.error("Error fetching posts:", error);
+      handleFirestoreError(error, OperationType.LIST, 'posts');
       setLoadingPosts(false);
     });
 
@@ -257,101 +257,114 @@ export const HomeView: React.FC<HomeViewProps> = ({
         className="hidden" 
         accept="image/*,video/*"
       />
-      {/* Stories Section */}
-      <div className="bg-white py-6 border-b border-zinc-100 shadow-sm">
-        <div className="flex gap-4 px-6 overflow-x-auto no-scrollbar">
-          {/* Create Story */}
-          <div className="flex-shrink-0 flex flex-col items-center gap-2">
-            <div 
-              onClick={() => setShowMusicPicker(true)}
-              className="relative group cursor-pointer"
-            >
-              <div className="w-20 h-20 rounded-[2rem] overflow-hidden border-2 border-dashed border-zinc-200 group-hover:border-indigo-500 transition-all duration-300 flex items-center justify-center bg-zinc-50 group-hover:bg-indigo-50/30">
+      {/* Stories Section Redesign */}
+      <section className="bg-zinc-50 pt-6 pb-6 px-6 overflow-x-auto no-scrollbar shadow-sm">
+        <div className="flex gap-6">
+          <div className="flex flex-col items-center gap-2 min-w-[64px] relative group cursor-pointer" onClick={() => storyInputRef.current?.click()}>
+            <div className="w-16 h-16 rounded-[1.2rem] p-0.5 border-[3px] border-dashed border-primary/40 group-hover:border-primary transition-all duration-300 flex items-center justify-center bg-zinc-100 relative">
+              <div className="w-full h-full rounded-xl overflow-hidden relative bg-zinc-200">
                 {userData?.avatar ? (
-                  <img src={userData.avatar} alt="Me" className="w-full h-full object-cover opacity-40 group-hover:opacity-60 transition-opacity" />
+                  <img src={userData.avatar} alt="Your Story" className="w-full h-full object-cover opacity-80" referrerPolicy="no-referrer" />
                 ) : (
-                  <div className="w-full h-full bg-zinc-100" />
-                )}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-10 h-10 bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg shadow-indigo-200 group-hover:scale-110 group-hover:rotate-12 transition-all duration-300">
-                    <Plus className="w-6 h-6 text-white" />
+                  <div className="w-full h-full flex items-center justify-center">
+                    <User className="w-8 h-8 text-zinc-400" />
                   </div>
-                </div>
+                )}
+                <div className="absolute inset-0 bg-black/10 group-hover:bg-black/0 transition-colors" />
+              </div>
+              <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-primary rounded-full flex items-center justify-center border-2 border-zinc-50 shadow-md transform transition-transform group-hover:scale-110">
+                <Plus className="w-4 h-4 text-white" strokeWidth={3} />
               </div>
               {uploadingStory && (
-                <div className="absolute inset-0 bg-white/60 backdrop-blur-sm rounded-[2rem] flex items-center justify-center z-20">
-                  <Loader2 className="w-8 h-8 text-indigo-600 animate-spin" />
+                <div className="absolute inset-0 bg-white/60 rounded-[1.2rem] flex items-center justify-center backdrop-blur-sm z-20">
+                  <Loader2 className="w-6 h-6 text-primary animate-spin" />
                 </div>
               )}
             </div>
-            <span className="text-[11px] font-black text-zinc-500 uppercase tracking-wider">Connectro Story</span>
+            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">YOU</span>
           </div>
 
-          {/* User Stories */}
-          {!loadingStories && stories.map((story, index) => (
-            <div key={story.id} className="flex-shrink-0 flex flex-col items-center gap-2">
-              <div 
-                onClick={() => setActiveStoryIndex(index)}
-                className="w-20 h-20 rounded-[2rem] p-1 bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 cursor-pointer hover:scale-105 transition-all duration-300 shadow-lg shadow-indigo-100"
-              >
-                <div className="w-full h-full rounded-[1.75rem] border-2 border-white overflow-hidden bg-zinc-100">
-                  <img src={story.userAvatar} alt={story.userName} className="w-full h-full object-cover" />
-                </div>
+          {loadingStories ? (
+            Array(4).fill(0).map((_, i) => (
+              <div key={i} className="flex flex-col items-center gap-2 min-w-[64px] animate-pulse">
+                <div className="w-16 h-16 rounded-[1.2rem] bg-zinc-200" />
+                <div className="w-12 h-3 bg-zinc-200 rounded-full mt-1" />
               </div>
-              <span className="text-[11px] font-black text-zinc-900 truncate w-20 text-center">
-                {story.userName.split(' ')[0]}
-              </span>
-            </div>
-          ))}
+            ))
+          ) : (
+            stories.filter(s => !s.isUser).map((story, index) => (
+              <div 
+                key={story.id} 
+                className="flex flex-col items-center gap-2 min-w-[64px] cursor-pointer group"
+                onClick={() => setActiveStoryIndex(index)}
+              >
+                <div className={cn(
+                  "w-16 h-16 rounded-[1.2rem] p-0.5 relative transition-transform duration-300 group-hover:scale-105 active:scale-95 shadow-md",
+                  story.viewed ? "bg-zinc-200 shadow-zinc-200/50" : "bg-primary shadow-primary/20"
+                )}>
+                  <div className="w-full h-full rounded-[1rem] border-2 border-zinc-50 overflow-hidden bg-zinc-100">
+                    {story.userAvatar ? (
+                      <img src={story.userAvatar} alt={story.userName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <User className="w-8 h-8 text-zinc-400" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 truncate w-16 text-center">
+                  {story.userName.split(' ')[0]}
+                </span>
+              </div>
+            ))
+          )}
         </div>
-      </div>
+      </section>
 
       {/* Create Post Section */}
-      <div className="bg-white p-6 mb-1 border-b border-zinc-100 shadow-sm">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="w-12 h-12 rounded-2xl overflow-hidden bg-zinc-100 flex-shrink-0 border-2 border-white shadow-md">
-            {userData?.avatar ? (
-              <img src={userData.avatar} alt="Me" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center bg-zinc-100">
-                <User className="w-6 h-6 text-zinc-400" />
-              </div>
-            )}
+      <div className="bg-white rounded-[2rem] p-5 mx-4 mb-2 mt-4 shadow-sm border border-zinc-100/80">
+        <div className="flex items-center gap-4 mb-5">
+          <div className="relative">
+            <div className="w-12 h-12 rounded-2xl overflow-hidden bg-zinc-100 flex-shrink-0 border-2 border-zinc-50 shadow-sm">
+              {userData?.avatar ? (
+                <img src={userData.avatar} alt="Me" className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center bg-zinc-100">
+                  <User className="w-6 h-6 text-zinc-400" />
+                </div>
+              )}
+            </div>
+            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-white shadow-sm"></div>
           </div>
           <button 
             onClick={() => setIsCreatePostOpen(true)}
-            className="flex-1 bg-zinc-50 hover:bg-zinc-100 text-zinc-500 text-left px-5 py-3.5 rounded-2xl transition-all text-sm font-bold border border-zinc-100 active:scale-[0.99]"
+            className="flex-1 bg-zinc-50 text-zinc-400 text-left py-3.5 px-5 rounded-2xl transition-all text-[14px] font-medium outline-none border border-zinc-100 hover:bg-zinc-100/80"
           >
-            What's on your mind, {userData?.firstName || 'Connectro'}?
+            Share something inspiring...
           </button>
         </div>
         <div className="flex items-center justify-between pt-2">
-          <button 
-            onClick={() => { setIsCreatePostOpen(true); setTimeout(() => postInputRef.current?.click(), 100); }}
-            className="flex items-center gap-3 px-4 py-2.5 rounded-2xl hover:bg-zinc-50 transition-all group active:scale-95"
-          >
-            <div className="w-9 h-9 bg-emerald-50 rounded-xl flex items-center justify-center group-hover:bg-emerald-100 transition-colors shadow-sm shadow-emerald-100/50">
-              <ImageIcon className="w-5 h-5 text-emerald-600" />
-            </div>
-            <span className="text-xs font-black text-zinc-600 uppercase tracking-tight">Photo</span>
-          </button>
-          <button 
-            onClick={() => { setIsCreatePostOpen(true); setTimeout(() => postInputRef.current?.click(), 100); }}
-            className="flex items-center gap-3 px-4 py-2.5 rounded-2xl hover:bg-zinc-50 transition-all group active:scale-95"
-          >
-            <div className="w-9 h-9 bg-indigo-50 rounded-xl flex items-center justify-center group-hover:bg-indigo-100 transition-colors shadow-sm shadow-indigo-100/50">
-              <Video className="w-5 h-5 text-indigo-600" />
-            </div>
-            <span className="text-xs font-black text-zinc-600 uppercase tracking-tight">Video</span>
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => { setIsCreatePostOpen(true); setTimeout(() => postInputRef.current?.click(), 100); }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-zinc-50 transition-all group active:scale-95"
+            >
+              <ImageIcon className="w-5 h-5 text-primary" />
+              <span className="text-[11px] font-bold text-primary uppercase tracking-widest">MEDIA</span>
+            </button>
+            <button 
+              onClick={() => { setIsCreatePostOpen(true); setTimeout(() => postInputRef.current?.click(), 100); }}
+              className="flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-zinc-50 transition-all group active:scale-95"
+            >
+              <Video className="w-5 h-5 text-orange-500" />
+              <span className="text-[11px] font-bold text-orange-500 uppercase tracking-widest">LIVE</span>
+            </button>
+          </div>
           <button 
             onClick={() => setIsCreatePostOpen(true)}
-            className="flex items-center gap-3 px-4 py-2.5 rounded-2xl hover:bg-zinc-50 transition-all group active:scale-95"
+            className="bg-primary text-white px-6 py-2.5 rounded-xl font-bold text-[11px] uppercase tracking-widest shadow-md shadow-primary/20 hover:bg-primary-hover transition-all active:scale-95"
           >
-            <div className="w-9 h-9 bg-rose-50 rounded-xl flex items-center justify-center group-hover:bg-rose-100 transition-colors shadow-sm shadow-rose-100/50">
-              <Smile className="w-5 h-5 text-rose-600" />
-            </div>
-            <span className="text-xs font-black text-zinc-600 uppercase tracking-tight">Feeling</span>
+            POST NOW
           </button>
         </div>
       </div>
@@ -374,11 +387,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   className={cn(
                     "flex items-center gap-4 p-4 rounded-2xl cursor-pointer transition-all duration-200",
                     selectedMusic === music.title 
-                      ? "bg-indigo-50 border-2 border-indigo-500 shadow-sm" 
+                      ? "bg-primary/10 border-2 border-primary shadow-sm" 
                       : "hover:bg-zinc-50 border-2 border-transparent"
                   )}
                 >
-                  <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center text-indigo-600 shadow-inner">
+                  <div className="w-12 h-12 bg-primary/20 rounded-xl flex items-center justify-center text-primary shadow-inner">
                     <Music2 className="w-6 h-6" />
                   </div>
                   <div className="flex-1">
@@ -386,7 +399,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <p className="text-xs text-zinc-500 font-bold">{music.artist}</p>
                   </div>
                   {selectedMusic === music.title && (
-                    <div className="w-6 h-6 bg-indigo-500 rounded-full flex items-center justify-center shadow-lg shadow-indigo-200">
+                    <div className="w-6 h-6 bg-primary rounded-full flex items-center justify-center shadow-lg shadow-primary/30">
                       <Check className="w-4 h-4 text-white" />
                     </div>
                   )}
@@ -395,13 +408,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
             <div className="p-5 bg-zinc-50 border-t border-zinc-100 flex flex-col gap-4">
               <div className="flex items-center gap-2 text-sm text-zinc-600 font-bold bg-white p-3 rounded-xl border border-zinc-100">
-                <Music className="w-4 h-4 text-indigo-500" />
+                <Music className="w-4 h-4 text-primary" />
                 <span>{selectedMusic ? `Selected: ${selectedMusic}` : 'No music selected'}</span>
               </div>
               <button 
                 disabled={uploadingStory}
                 onClick={() => storyInputRef.current?.click()}
-                className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200 flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50"
+                className="w-full bg-primary text-white py-4 rounded-2xl font-black hover:bg-primary-hover transition-all shadow-lg shadow-primary/30 flex items-center justify-center gap-2 active:scale-[0.98] disabled:opacity-50"
               >
                 {uploadingStory ? <Loader2 className="w-5 h-5 animate-spin" /> : <ImageIcon className="w-5 h-5" />}
                 Select Photo/Video
@@ -461,7 +474,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 <div className="flex items-center gap-3">
                   {activeStory.music && (
                     <div className="flex items-center gap-2 bg-white/10 backdrop-blur-xl px-4 py-2 rounded-2xl text-white text-xs font-black border border-white/10">
-                      <Music className="w-3 h-3 text-indigo-400 animate-pulse" />
+                      <Music className="w-3 h-3 text-primary animate-pulse" />
                       <span>{activeStory.music}</span>
                     </div>
                   )}
@@ -506,19 +519,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
       </AnimatePresence>
 
       {/* Feed */}
-      <div className="flex flex-col gap-4 px-4">
-        <div className="flex justify-between items-center px-2">
-          <h3 className="text-xl font-black text-zinc-900 tracking-tighter">All posts</h3>
-          <button 
-            onClick={() => { setLoadingPosts(true); setRefreshTrigger(prev => prev + 1); }}
-            className="bg-zinc-100 px-4 py-2 rounded-xl font-black text-xs text-zinc-900 hover:bg-zinc-200"
-          >
-            Refresh
-          </button>
-        </div>
+      <div className="flex flex-col gap-4">
         {loadingPosts ? (
-          <div className="bg-white p-12 rounded-[2.5rem] flex flex-col items-center justify-center gap-4 shadow-sm border border-zinc-100">
-            <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
+          <div className="bg-white p-12 mx-4 rounded-[2.5rem] flex flex-col items-center justify-center gap-4 shadow-sm border border-zinc-100">
+            <Loader2 className="w-10 h-10 text-primary animate-spin" />
             <span className="text-zinc-500 font-black text-sm uppercase tracking-widest">Connectro Feed Loading</span>
           </div>
         ) : posts.length > 0 ? (
@@ -526,7 +530,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             <PostCard key={post.id} post={post} onViewProfile={onViewProfile} />
           ))
         ) : (
-          <div className="bg-white p-16 rounded-[2.5rem] flex flex-col items-center justify-center gap-6 shadow-sm text-center border border-zinc-100">
+          <div className="bg-white p-16 mx-4 rounded-[2.5rem] flex flex-col items-center justify-center gap-6 shadow-sm text-center border border-zinc-100">
             <div className="w-20 h-20 bg-zinc-50 rounded-3xl flex items-center justify-center shadow-inner">
               <Globe className="w-10 h-10 text-zinc-200" />
             </div>
@@ -536,7 +540,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
             </div>
             <button 
               onClick={() => setTab('dashboard')}
-              className="bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95"
+              className="bg-primary text-white px-8 py-4 rounded-2xl font-black shadow-lg shadow-primary/30 hover:bg-primary-hover transition-all active:scale-95"
             >
               Explore Creators
             </button>

@@ -11,7 +11,7 @@ import {
   Clock,
   MessageCircle
 } from 'lucide-react';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { 
   collection, 
   query, 
@@ -69,6 +69,9 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
         .filter(u => u.id !== user.uid);
       setNewUsers(usersData);
       setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'users');
+      setLoading(false);
     });
 
     // Fetch incoming friend requests
@@ -81,15 +84,21 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
       const requests = [];
       for (const requestDoc of snapshot.docs) {
         const data = requestDoc.data();
-        const fromUserDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', data.fromUserId), limit(1)));
-        const fromUserData = fromUserDoc.docs[0]?.data();
-        requests.push({
-          id: requestDoc.id,
-          ...data,
-          fromUser: fromUserData
-        });
+        try {
+          const fromUserDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', data.fromUserId), limit(1)));
+          const fromUserData = fromUserDoc.docs[0]?.data();
+          requests.push({
+            id: requestDoc.id,
+            ...data,
+            fromUser: fromUserData
+          });
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'users');
+        }
       }
       setIncomingRequests(requests);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendRequests');
     });
 
     // Fetch sent friend requests
@@ -101,6 +110,8 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
     const unsubscribeSent = onSnapshot(sentQuery, (snapshot) => {
       const ids = snapshot.docs.map(doc => doc.data().toUserId);
       setSentRequestIds(ids);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendRequests');
     });
 
     // Fetch friendships and friend data
@@ -119,12 +130,18 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
       // Fetch friend details
       const friendDetails = [];
       for (const friendId of ids) {
-        const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
-        if (!friendDoc.empty) {
-          friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+        try {
+          const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
+          if (!friendDoc.empty) {
+            friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'users');
         }
       }
       setFriends(friendDetails);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendships');
     });
 
     return () => {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, MoreHorizontal, User, Bell, Heart, MessageCircle, Share2, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db, auth } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, Timestamp, deleteDoc, doc } from 'firebase/firestore';
 
 interface Notification {
@@ -43,7 +43,7 @@ export const NotificationsView: React.FC = () => {
       setNotifications(notifs);
       setLoading(false);
     }, (error) => {
-      console.error("Error fetching notifications:", error);
+      handleFirestoreError(error, OperationType.LIST, 'notifications');
       setLoading(false);
     });
 

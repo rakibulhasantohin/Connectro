@@ -24,7 +24,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { auth, db } from '../firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { useUser } from '../contexts/UserContext';
 import { doc, updateDoc, addDoc, collection, Timestamp, increment, deleteDoc, onSnapshot, query, setDoc, getDocs } from 'firebase/firestore';
 import { Trash2 } from 'lucide-react';
@@ -85,6 +85,17 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
   const isOwner = postUserId === auth.currentUser?.uid;
 
   useEffect(() => {
+    if (!auth.currentUser) return;
+    const savedRef = doc(db, 'users', auth.currentUser.uid, 'savedPosts', post.id.toString());
+    const unsubscribe = onSnapshot(savedRef, (doc) => {
+      setIsSaved(doc.exists());
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${auth.currentUser?.uid}/savedPosts/${post.id}`);
+    });
+    return () => unsubscribe();
+  }, [post.id]);
+
+  useEffect(() => {
     const reactionsRef = collection(db, 'posts', post.id.toString(), 'reactions');
     const q = query(reactionsRef);
     
@@ -102,6 +113,8 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
       
       setReactions(reactionsData);
       setUserReaction(currentUserReaction);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `posts/${post.id}/reactions`);
     });
 
     return () => unsubscribe();
@@ -202,6 +215,23 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
       await createNotification('share');
     } catch (error) {
       console.error("Error sharing:", error);
+    }
+  };
+
+  const handleToggleSave = async () => {
+    if (!auth.currentUser) return;
+    const savedRef = doc(db, 'users', auth.currentUser.uid, 'savedPosts', post.id.toString());
+    try {
+      if (isSaved) {
+        await deleteDoc(savedRef);
+      } else {
+        await setDoc(savedRef, {
+          savedAt: Timestamp.now(),
+          postId: post.id.toString()
+        });
+      }
+    } catch (error) {
+      console.error("Error toggling save:", error);
     }
   };
 
@@ -318,11 +348,11 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
   const CurrentReactionIcon = currentUserReactionData?.icon || Heart;
 
   return (
-    <article className="bg-white rounded-[2.5rem] shadow-sm border border-zinc-100/80 mb-6 overflow-hidden mx-3">
-      <div className="flex justify-between items-center px-6 py-5">
-        <div className="flex items-center gap-4">
+    <article className="bg-white rounded-[2rem] shadow-sm border border-zinc-100/80 mb-4 overflow-hidden mx-4">
+      <div className="flex justify-between items-center px-5 py-4">
+        <div className="flex items-center gap-3">
           <div onClick={handleProfileClick} className="cursor-pointer group relative">
-            <div className="w-12 h-12 rounded-2xl overflow-hidden border-2 border-zinc-50 group-hover:border-primary/30 transition-all duration-500 group-hover:rotate-3">
+            <div className="w-12 h-12 rounded-[1.2rem] overflow-hidden bg-zinc-100 border border-zinc-200/50 group-hover:border-primary/50 transition-colors">
               {displayAvatar ? (
                 <img src={displayAvatar} alt={displayName} className="w-full h-full object-cover" />
               ) : (
@@ -336,7 +366,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
             <div className="flex items-center gap-1.5">
               <h3 
                 onClick={handleProfileClick}
-                className="text-[16px] font-black text-zinc-900 leading-tight hover:text-primary cursor-pointer transition-colors tracking-tight"
+                className="text-[15px] font-bold text-zinc-900 leading-tight hover:text-primary cursor-pointer transition-colors"
               >
                 {displayName}
               </h3>
@@ -344,20 +374,20 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
                 <BadgeCheck className="w-4 h-4 text-primary fill-primary/10" />
               )}
             </div>
-            <div className="flex items-center text-[10px] font-black text-zinc-400 gap-2 mt-1 uppercase tracking-[0.15em]">
+            <div className="flex items-center text-xs text-zinc-500 font-medium gap-1.5 mt-0.5">
               <span>{displayTime}</span>
-              <span className="w-1 h-1 bg-zinc-200 rounded-full"></span>
+              <span>•</span>
               {post.privacy === 'public' && <Globe className="w-3 h-3" />}
               {post.privacy === 'friends' && <UsersIcon className="w-3 h-3" />}
               {post.privacy === 'private' && <Lock className="w-3 h-3" />}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
           <button 
-            onClick={() => setIsSaved(!isSaved)}
+            onClick={handleToggleSave}
             className={cn(
-              "w-10 h-10 rounded-2xl flex items-center justify-center transition-all active:scale-90",
+              "w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-90",
               isSaved ? "text-amber-500 bg-amber-50" : "text-zinc-400 hover:bg-zinc-50"
             )}
           >
@@ -366,7 +396,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
           <div className="relative">
             <button 
               onClick={() => setShowMenu(!showMenu)}
-              className="w-10 h-10 rounded-2xl flex items-center justify-center hover:bg-zinc-50 text-zinc-400 transition-all active:scale-90"
+              className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-zinc-50 text-zinc-400 transition-all active:scale-90"
             >
               <MoreHorizontal className="w-5 h-5" />
             </button>
@@ -435,7 +465,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
         </div>
       </div>
 
-      <div className="px-7 pb-5 text-[16px] text-zinc-800 leading-relaxed font-medium whitespace-pre-wrap">
+      <div className="px-5 pb-4 text-[15px] text-zinc-800 leading-relaxed whitespace-pre-wrap">
         {isEditing ? (
           <div className="space-y-2">
             <textarea
@@ -457,12 +487,12 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
 
       {post.image && (
         <div className="px-3 pb-3">
-          <div className="w-full bg-zinc-100 rounded-[2rem] overflow-hidden relative group cursor-pointer">
+          <div className="w-full bg-zinc-100 rounded-[1.5rem] overflow-hidden relative group cursor-pointer">
             <img 
               src={post.image} 
               alt="Post" 
               loading="lazy"
-              className="w-full h-auto max-h-[600px] object-cover transition-transform duration-1000 ease-out group-hover:scale-105" 
+              className="w-full h-auto max-h-[500px] object-cover transition-transform duration-1000 ease-out group-hover:scale-105" 
               referrerPolicy="no-referrer"
             />
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors duration-300" />
@@ -472,7 +502,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
 
       {post.video && (
         <div className="px-3 pb-3">
-          <div className="w-full bg-black rounded-[2rem] overflow-hidden relative group aspect-video flex items-center justify-center">
+          <div className="w-full bg-black rounded-[1.5rem] overflow-hidden relative group aspect-video flex items-center justify-center">
             <video 
               ref={videoRef}
               src={post.video} 
@@ -495,15 +525,15 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
                 onClick={togglePlay}
                 className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors z-10"
               >
-                <div className="w-16 h-16 bg-white/20 rounded-[2rem] flex items-center justify-center backdrop-blur-md border border-white/20 transform transition-transform hover:scale-110 active:scale-95">
-                  <Play className="w-8 h-8 text-white fill-current ml-1" />
+                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md border border-white/20 transform transition-transform hover:scale-110 active:scale-95">
+                  <Play className="w-6 h-6 text-white fill-current ml-1" />
                 </div>
               </button>
             )}
 
             <div className="absolute inset-x-0 bottom-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20">
-              <div className="px-6 py-4 flex flex-col gap-3">
-                <div className="relative w-full h-1.5 group/progress mb-1">
+              <div className="px-4 py-3 flex flex-col gap-2">
+                <div className="relative w-full h-1 group/progress mb-1">
                   <input 
                     type="range"
                     min="0"
@@ -518,21 +548,21 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
                       className="h-full bg-primary relative transition-all duration-75" 
                       style={{ width: `${progress}%` }}
                     >
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full shadow-lg scale-0 group-hover/progress:scale-100 transition-transform z-40" />
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow-lg scale-0 group-hover/progress:scale-100 transition-transform z-40" />
                     </div>
                   </div>
                 </div>
 
                 <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-4">
                     <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
-                      {isPlaying ? <Pause className="w-6 h-6 fill-current" /> : <Play className="w-6 h-6 fill-current" />}
+                      {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
                     </button>
                     <button onClick={() => setIsMuted(!isMuted)} className="text-white hover:text-primary transition-colors">
-                      {isMuted ? <VolumeX className="w-6 h-6" /> : <Volume2 className="w-6 h-6" />}
+                      {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                     </button>
                   </div>
-                  <div className="text-white text-[13px] font-bold tracking-tight">
+                  <div className="text-white text-xs font-bold tracking-tight">
                     {videoRef.current && !isNaN(videoRef.current.duration) ? 
                       `${Math.floor(videoRef.current.currentTime / 60)}:${Math.floor(videoRef.current.currentTime % 60).toString().padStart(2, '0')} / ${Math.floor(videoRef.current.duration / 60)}:${Math.floor(videoRef.current.duration % 60).toString().padStart(2, '0')}` 
                       : '0:00 / 0:00'
@@ -546,14 +576,14 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
       )}
 
       {(reactions.length > 0 || Number(post.comments) > 0 || Number(post.shares) > 0) && (
-        <div className="px-6 py-4 flex justify-between items-center text-zinc-500 text-[13px] border-t border-zinc-50">
+        <div className="px-5 py-3 flex justify-between items-center text-zinc-500 text-[13px] border-t border-zinc-50">
           <div className="flex items-center gap-4">
             {reactions.length > 0 && (
               <div 
-                className="flex items-center gap-2.5 cursor-pointer group"
+                className="flex items-center gap-2 cursor-pointer group"
                 onClick={() => setShowLikes(true)}
               >
-                <div className="flex -space-x-2">
+                <div className="flex -space-x-1.5">
                   {Array.from(new Set(reactions.map(r => r.type))).slice(0, 3).map((type, idx) => {
                     const rData = REACTION_TYPES.find(r => r.type === type);
                     const Icon = rData?.icon || Heart;
@@ -561,17 +591,17 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
                       <div 
                         key={type} 
                         className={cn(
-                          "w-6 h-6 rounded-xl flex items-center justify-center border-2 border-white shadow-md",
+                          "w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm",
                           rData?.bg || 'bg-rose-500'
                         )}
                         style={{ zIndex: 10 - idx }}
                       >
-                        <Icon className={cn("w-3 h-3 fill-current", rData?.color || 'text-white')} />
+                        <Icon className={cn("w-2.5 h-2.5 fill-current", rData?.color || 'text-white')} />
                       </div>
                     );
                   })}
                 </div>
-                <span className="font-bold text-zinc-700 group-hover:text-primary transition-colors">
+                <span className="font-bold text-zinc-600 group-hover:text-primary transition-colors text-xs">
                   {userReaction ? (
                     reactions.length === 1 ? 'You' : `You and ${formatCount(reactions.length - 1)} others`
                   ) : (
@@ -581,7 +611,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
               </div>
             )}
           </div>
-          <div className="flex gap-5 font-bold text-zinc-400">
+          <div className="flex gap-4 font-bold text-zinc-400 text-xs">
             {Number(post.comments) > 0 && (
               <span className="hover:text-zinc-600 cursor-pointer">{formatCount(post.comments)} comments</span>
             )}
@@ -592,7 +622,7 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
         </div>
       )}
 
-      <div className="flex justify-between items-center px-4 py-3 bg-zinc-50/30 relative">
+      <div className="flex justify-between items-center px-3 py-2 border-t border-zinc-100/80 relative">
         {showReactionPicker && (
           <div 
             className="absolute bottom-full left-4 mb-2 bg-white rounded-full shadow-2xl border border-zinc-100 p-1.5 flex gap-1.5 animate-in slide-in-from-bottom-4 duration-200 z-[60]"
@@ -619,58 +649,58 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
           onTouchStart={handleTouchStart}
           onTouchEnd={handleTouchEnd}
           className={cn(
-            "flex-1 flex justify-center items-center gap-2.5 py-3 rounded-2xl transition-all active:scale-95",
-            userReaction ? (currentUserReactionData?.bg || "bg-rose-50") : "text-zinc-600 hover:bg-zinc-100"
+            "flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl transition-all active:scale-95",
+            userReaction ? (currentUserReactionData?.bg || "bg-rose-50") : "text-zinc-500 hover:bg-zinc-50"
           )}
         >
           <CurrentReactionIcon className={cn("w-5 h-5", userReaction && (currentUserReactionData?.color || "text-rose-500 fill-current"))} />
-          <span className={cn("text-[14px] font-black tracking-tight", userReaction && (currentUserReactionData?.color || "text-rose-500"))}>
+          <span className={cn("text-xs font-bold", userReaction && (currentUserReactionData?.color || "text-rose-500"))}>
             {currentUserReactionData?.label || 'Like'}
           </span>
         </button>
         <button 
           onClick={handleComment}
-          className="flex-1 flex justify-center items-center gap-2.5 py-3 rounded-2xl hover:bg-zinc-100 text-zinc-600 transition-all active:scale-95"
+          className="flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl hover:bg-zinc-50 text-zinc-500 transition-all active:scale-95"
         >
           <MessageCircle className="w-5 h-5" />
-          <span className="text-[14px] font-black tracking-tight">Comment</span>
+          <span className="text-xs font-bold">Comment</span>
         </button>
         <button 
           onClick={handleShare}
-          className="flex-1 flex justify-center items-center gap-2.5 py-3 rounded-2xl hover:bg-zinc-100 text-zinc-600 transition-all active:scale-95"
+          className="flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl hover:bg-zinc-50 text-zinc-500 transition-all active:scale-95"
         >
           <Share2 className="w-5 h-5" />
-          <span className="text-[14px] font-black tracking-tight">Share</span>
+          <span className="text-xs font-bold">Share</span>
         </button>
       </div>
 
       {/* Likes Modal Redesign */}
       {showLikes && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/70 backdrop-blur-xl animate-in fade-in duration-300">
-          <div className="bg-white w-full max-w-md rounded-[2.5rem] overflow-hidden shadow-2xl animate-in zoom-in duration-300">
-            <div className="flex justify-between items-center p-6 border-b border-zinc-100">
-              <div className="flex gap-8">
-                <button className="text-primary font-black border-b-2 border-primary pb-2 text-xs uppercase tracking-[0.2em]">All</button>
-                <div className="flex items-center gap-2 text-zinc-400 font-black pb-2 text-xs cursor-pointer hover:text-zinc-600 transition-colors uppercase tracking-[0.2em]">
-                  <div className="w-5 h-5 rounded-lg bg-rose-500 flex items-center justify-center">
-                    <Heart className="w-3 h-3 text-white fill-white" />
+          <div className="bg-white w-full max-w-md rounded-[2rem] overflow-hidden shadow-2xl animate-in zoom-in duration-300">
+            <div className="flex justify-between items-center p-5 border-b border-zinc-100">
+              <div className="flex gap-6">
+                <button className="text-primary font-black border-b-2 border-primary pb-2 text-xs uppercase tracking-widest">All</button>
+                <div className="flex items-center gap-2 text-zinc-400 font-bold pb-2 text-xs cursor-pointer hover:text-zinc-600 transition-colors uppercase tracking-widest">
+                  <div className="w-4 h-4 rounded-md bg-rose-500 flex items-center justify-center">
+                    <Heart className="w-2.5 h-2.5 text-white fill-white" />
                   </div>
                   <span>{displayLikes}</span>
                 </div>
               </div>
               <button 
                 onClick={() => setShowLikes(false)}
-                className="w-10 h-10 bg-zinc-100 rounded-2xl flex items-center justify-center hover:bg-zinc-200 transition-all active:scale-90"
+                className="w-8 h-8 bg-zinc-100 rounded-xl flex items-center justify-center hover:bg-zinc-200 transition-all active:scale-90"
               >
-                <X className="w-5 h-5 text-zinc-600" />
+                <X className="w-4 h-4 text-zinc-600" />
               </button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto no-scrollbar">
               {reactions.map((reaction) => (
-                <div key={reaction.userId} className="flex items-center justify-between px-6 py-5 hover:bg-zinc-50 transition-colors cursor-pointer group">
-                  <div className="flex items-center gap-4">
+                <div key={reaction.userId} className="flex items-center justify-between px-5 py-4 hover:bg-zinc-50 transition-colors cursor-pointer group">
+                  <div className="flex items-center gap-3">
                     <div className="relative">
-                      <div className="w-14 h-14 rounded-2xl overflow-hidden border-2 border-zinc-50 group-hover:border-primary/30 transition-all duration-500">
+                      <div className="w-12 h-12 rounded-[1.2rem] overflow-hidden border-2 border-zinc-50 group-hover:border-primary/30 transition-all duration-500">
                         {reaction.userAvatar ? (
                           <img 
                             src={reaction.userAvatar} 
@@ -680,25 +710,25 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
                           />
                         ) : (
                           <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                            <User className="w-6 h-6 text-zinc-400" />
+                            <User className="w-5 h-5 text-zinc-400" />
                           </div>
                         )}
                       </div>
                       <div className={cn(
-                        "absolute -bottom-1 -right-1 rounded-xl p-1.5 border-2 border-white shadow-lg",
+                        "absolute -bottom-1 -right-1 rounded-lg p-1 border-2 border-white shadow-sm",
                         REACTION_TYPES.find(r => r.type === reaction.type)?.bg || 'bg-rose-500'
                       )}>
                         {(() => {
                           const Icon = REACTION_TYPES.find(r => r.type === reaction.type)?.icon || Heart;
-                          return <Icon className={cn("w-3 h-3 fill-current", REACTION_TYPES.find(r => r.type === reaction.type)?.color || 'text-white')} />;
+                          return <Icon className={cn("w-2.5 h-2.5 fill-current", REACTION_TYPES.find(r => r.type === reaction.type)?.color || 'text-white')} />;
                         })()}
                       </div>
                     </div>
                     <div className="flex flex-col">
-                      <span className="font-black text-[16px] text-zinc-900 leading-tight tracking-tight">{reaction.userName}</span>
+                      <span className="font-bold text-[15px] text-zinc-900 leading-tight">{reaction.userName}</span>
                     </div>
                   </div>
-                  <button className="bg-primary text-white px-6 py-2.5 rounded-2xl font-black text-xs hover:bg-primary-hover transition-all active:scale-90 shadow-lg shadow-primary/25 uppercase tracking-widest">
+                  <button className="bg-primary text-white px-5 py-2 rounded-xl font-bold text-xs hover:bg-primary-hover transition-all active:scale-90 shadow-md shadow-primary/20">
                     Connect
                   </button>
                 </div>

@@ -39,12 +39,13 @@ import {
   MoreVertical,
   ChevronDown,
   Bold,
-  Italic
+  Italic,
+  Bookmark
 } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp, serverTimestamp, getDocs } from 'firebase/firestore';
 import { PostCard } from './PostCard';
 import { motion, AnimatePresence } from 'motion/react';
@@ -74,11 +75,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const isOwnProfile = !targetUserId || targetUserId === user?.uid;
   const displayData = isOwnProfile ? currentUserData : targetUserData;
 
-  const [activeTab, setActiveTab] = useState('All');
+  const [activeTab, setActiveTab] = useState('Posts');
   const [avatar, setAvatar] = useState(displayData?.avatar || '');
   const [cover, setCover] = useState(displayData?.cover || '');
   const [posts, setPosts] = useState<any[]>([]);
   const [postsLoading, setPostsLoading] = useState(true);
+  const [savedPosts, setSavedPosts] = useState<any[]>([]);
+  const [savedPostsLoading, setSavedPostsLoading] = useState(true);
   const [friends, setFriends] = useState<any[]>([]);
   const [friendsLoading, setFriendsLoading] = useState(true);
   const [showMusicPicker, setShowMusicPicker] = useState(false);
@@ -95,8 +98,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const bioRef = useRef<HTMLTextAreaElement>(null);
 
   const filteredPosts = posts.filter(post => {
-    if (activeTab === 'All') return true;
-    if (activeTab === 'Reels') return !!post.video;
+    if (activeTab === 'Posts') return true;
     if (activeTab === 'Photos') return !!post.image;
     return false;
   });
@@ -123,7 +125,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       }
       setLoadingUser(false);
     }, (error) => {
-      console.error("Error fetching target user:", error);
+      handleFirestoreError(error, OperationType.GET, `users/${targetUserId}`);
       setLoadingUser(false);
     });
 
@@ -137,6 +139,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const followId = `${user.uid}_${targetUserId}`;
     const unsubscribe = onSnapshot(doc(db, 'follows', followId), (doc) => {
       setIsFollowing(doc.exists());
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `follows/${followId}`);
     });
 
     return () => unsubscribe();
@@ -222,12 +226,59 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       setPosts(postsData);
       setPostsLoading(false);
     }, (error) => {
-      console.error("Error fetching profile posts:", error);
+      handleFirestoreError(error, OperationType.LIST, 'posts');
       setPostsLoading(false);
     });
 
     return () => unsubscribe();
   }, [targetUserId, user?.uid]);
+
+  useEffect(() => {
+    const uid = targetUserId || user?.uid;
+    if (!uid || !isOwnProfile) {
+      setSavedPosts([]);
+      setSavedPostsLoading(false);
+      return;
+    }
+
+    const savedQuery = query(
+      collection(db, 'users', uid, 'savedPosts'),
+      orderBy('savedAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(savedQuery, async (snapshot) => {
+      const savedPostIds = snapshot.docs.map(doc => doc.data().postId);
+      
+      if (savedPostIds.length === 0) {
+        setSavedPosts([]);
+        setSavedPostsLoading(false);
+        return;
+      }
+
+      // Fetch actual posts
+      try {
+        const postsData = [];
+        // Firestore 'in' query supports up to 10 items. For simplicity, we fetch them individually or in chunks.
+        // Let's fetch them individually for now.
+        for (const postId of savedPostIds) {
+          const postDoc = await getDoc(doc(db, 'posts', postId));
+          if (postDoc.exists()) {
+            postsData.push({ id: postDoc.id, ...postDoc.data() });
+          }
+        }
+        setSavedPosts(postsData);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, 'posts');
+      } finally {
+        setSavedPostsLoading(false);
+      }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, `users/${uid}/savedPosts`);
+      setSavedPostsLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [targetUserId, user?.uid, isOwnProfile]);
 
   // Fetch real friends
   useEffect(() => {
@@ -256,12 +307,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       const idsToFetch = ids.slice(0, 6);
       
       for (const friendId of idsToFetch) {
-        const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
-        if (!friendDoc.empty) {
-          friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+        try {
+          const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
+          if (!friendDoc.empty) {
+            friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'users');
         }
       }
       setFriends(friendDetails);
+      setFriendsLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendships');
       setFriendsLoading(false);
     });
 
@@ -365,16 +423,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 setRequestId(null);
               }
               setFriendshipLoading(false);
+            }, (error) => {
+              handleFirestoreError(error, OperationType.LIST, 'friendRequests');
+              setFriendshipLoading(false);
             });
           }
+        }, (error) => {
+          handleFirestoreError(error, OperationType.LIST, 'friendRequests');
+          setFriendshipLoading(false);
         });
       }
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `friendships/${friendshipId}`);
+      setFriendshipLoading(false);
     });
 
     // Listen for follow status
     const followId = `${user.uid}_${targetUserId}`;
     const unsubFollow = onSnapshot(doc(db, 'follows', followId), (docSnap) => {
       setIsFollowing(docSnap.exists());
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `follows/${followId}`);
     });
 
     return () => {
@@ -704,6 +773,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                     className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-3 text-sm font-bold focus:ring-2 focus:ring-primary outline-none"
                   />
                 </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest ml-1">Website</label>
+                  <input 
+                    type="text" 
+                    value={editFormData.website || ''} 
+                    onChange={(e) => setEditFormData({...editFormData, website: e.target.value})}
+                    placeholder="e.g. yourdomain.com"
+                    className="w-full bg-zinc-50 border border-zinc-100 rounded-2xl px-5 py-3 text-sm font-bold focus:ring-2 focus:ring-primary outline-none"
+                  />
+                </div>
               </div>
             </div>
 
@@ -784,441 +863,345 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       )}
 
-      <div className="relative h-64 sm:h-80 bg-zinc-200 group/cover overflow-hidden">
+      <div className="relative h-48 sm:h-56 bg-zinc-200 group/cover overflow-hidden">
         {cover ? (
-          <img src={cover} alt="Cover" className="w-full h-full object-cover transition-transform duration-700 group-hover/cover:scale-110" />
+          <img src={cover} alt="Cover" className="w-full h-full object-cover transition-transform duration-700 group-hover/cover:scale-105" />
         ) : (
-          <div className="w-full h-full bg-gradient-to-br from-zinc-900 via-indigo-950 to-zinc-900 flex items-center justify-center relative">
-            <div className="absolute inset-0 opacity-20 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary via-transparent to-transparent"></div>
+          <div className="w-full h-full bg-gradient-to-br from-indigo-900 via-purple-900 to-zinc-900 flex items-center justify-center relative">
+            <div className="absolute inset-0 opacity-30 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary via-transparent to-transparent"></div>
           </div>
         )}
         
-        {isOwnProfile && (
+        {!isOwnProfile && (
           <button 
-            onClick={() => coverInputRef.current?.click()}
-            className="absolute bottom-4 right-4 bg-white/20 backdrop-blur-xl p-2.5 rounded-xl text-white border border-white/20 hover:bg-white/30 transition-all shadow-2xl active:scale-90 z-20"
+            onClick={onBack} 
+            className="absolute top-4 left-4 bg-black/20 backdrop-blur-md p-2.5 rounded-full text-white hover:bg-black/30 transition-all active:scale-90 z-30"
           >
-            <Camera className="w-5 h-5" />
+            <ChevronLeft className="w-6 h-6" />
           </button>
         )}
 
-        {/* Top Navigation */}
-        <div className="absolute top-4 left-4 right-4 z-30 flex justify-between items-center">
-          <button onClick={onBack} className="bg-black/20 backdrop-blur-md p-2.5 rounded-2xl text-white hover:bg-black/30 transition-all active:scale-90">
-            <ChevronLeft className="w-6 h-6" />
+        {isOwnProfile && (
+          <button 
+            onClick={() => coverInputRef.current?.click()}
+            className="absolute bottom-3 right-3 bg-black/40 backdrop-blur-md p-2 rounded-full text-white border border-white/20 hover:bg-black/60 transition-all z-20"
+          >
+            <Camera className="w-4 h-4" />
           </button>
-          <div className="flex gap-2">
-            <button className="bg-black/20 backdrop-blur-md p-2.5 rounded-2xl text-white hover:bg-black/30 transition-all active:scale-90"><Pencil className="w-5 h-5" /></button>
-            <button className="bg-black/20 backdrop-blur-md p-2.5 rounded-2xl text-white hover:bg-black/30 transition-all active:scale-90"><Search className="w-5 h-5" /></button>
-            <button className="bg-black/20 backdrop-blur-md p-2.5 rounded-2xl text-white hover:bg-black/30 transition-all active:scale-90"><MoreVertical className="w-5 h-5" /></button>
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Profile Info Section */}
-      <div className="px-5 sm:px-8 relative">
-        <div className="flex justify-between items-end -mt-16 sm:-mt-20 mb-6 relative z-20">
+      <div className="px-4 sm:px-6 relative">
+        <div className="flex justify-between items-end -mt-12 sm:-mt-16 mb-4 relative z-20">
           <div className="relative group/avatar">
-            <div className="w-32 h-32 sm:w-40 sm:h-40 rounded-full border-4 border-white shadow-2xl overflow-hidden bg-zinc-100 relative">
+            <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full border-4 border-white shadow-md overflow-hidden bg-zinc-100 relative">
               {avatar ? (
                 <img src={avatar} alt="Profile" className="w-full h-full object-cover" />
               ) : (
                 <div className="w-full h-full flex items-center justify-center">
-                  <User className="w-16 h-16 text-zinc-300" />
+                  <User className="w-12 h-12 text-zinc-300" />
                 </div>
               )}
             </div>
             {isOwnProfile && (
               <button 
                 onClick={() => avatarInputRef.current?.click()}
-                className="absolute bottom-2 right-2 bg-zinc-100 p-2.5 rounded-full text-zinc-900 border-4 border-white shadow-lg hover:bg-zinc-200 transition-all active:scale-90"
+                className="absolute bottom-0 right-0 bg-zinc-100 p-1.5 rounded-full text-zinc-900 border-2 border-white shadow-sm hover:bg-zinc-200 transition-all active:scale-90"
               >
-                <Camera className="w-5 h-5" />
+                <Camera className="w-4 h-4" />
               </button>
             )}
           </div>
-          <div className="pb-2">
-            <button className="w-12 h-12 bg-zinc-100 rounded-2xl flex items-center justify-center text-zinc-900 hover:bg-zinc-200 transition-all active:scale-90 relative">
-              <ChevronDown className="w-6 h-6" />
-              <div className="absolute -top-1 -right-1 w-3 h-3 bg-rose-500 rounded-full border-2 border-white"></div>
-            </button>
-          </div>
         </div>
         
-        <div className="space-y-1">
+        <div className="space-y-1 mb-4">
           <div className="flex items-center gap-2">
-            <h2 className="text-3xl font-black text-zinc-900 tracking-tighter">
+            <h2 className="text-2xl font-bold text-zinc-900 tracking-tight">
               {displayData?.firstName} {displayData?.lastName}
             </h2>
-            {displayData?.verified && <BadgeCheck className="w-6 h-6 text-primary fill-primary/10" />}
+            <span className="bg-primary text-white text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase tracking-wider">
+              ★ PRO
+            </span>
           </div>
           
-          <div className="flex items-center gap-2 text-zinc-500 font-black text-xs uppercase tracking-widest">
-            <span>{displayData?.followers || 0} followers</span>
-            <span className="w-1 h-1 bg-zinc-300 rounded-full"></span>
-            <span>{displayData?.following || 0} following</span>
-            <span className="w-1 h-1 bg-zinc-300 rounded-full"></span>
-            <span>{displayData?.postCount || 0} posts</span>
-          </div>
-        </div>
-
-        <div className="mt-4 space-y-1">
-          <div className="flex items-center gap-2 text-zinc-400 font-bold text-xs">
-            <span>Profile</span>
-            <span className="w-1 h-1 bg-zinc-300 rounded-full"></span>
-            <span>{displayData?.category || 'Digital creator'}</span>
-          </div>
-          <div className={cn(
-            "text-zinc-800 font-medium text-[15px] leading-relaxed max-w-md",
-            !showFullBio && "line-clamp-2"
-          )}>
-            <Markdown
-              components={{
-                p: ({ children }) => <span className="block">{children}</span>,
-                strong: ({ children }) => <strong className="font-black text-zinc-900">{children}</strong>,
-                em: ({ children }) => <em className="italic text-zinc-700">{children}</em>,
-              }}
-            >
-              {displayData?.bio || 'What a pity I feel for eating for myself! 🤍'}
-            </Markdown>
-          </div>
-          <button 
-            onClick={() => setShowFullBio(!showFullBio)}
-            className="text-zinc-400 font-bold text-sm hover:text-zinc-600 transition-colors"
-          >
-            {showFullBio ? '... See less' : '... See more'}
-          </button>
-        </div>
-
-        <div className="mt-6 space-y-3">
-          <div className="flex items-center gap-3 text-sm font-bold text-zinc-900">
-            <Briefcase className="w-5 h-5 text-zinc-400" />
-            <div className="flex items-center gap-2">
-              <span>{displayData?.category || 'Digital creator'}</span>
-              <span className="w-1 h-1 bg-zinc-300 rounded-full"></span>
-              <span>{displayData?.college || 'Abdul Awal Degree College'}</span>
-            </div>
-          </div>
-          
-          <div className="flex items-center gap-3 text-sm font-bold text-zinc-900">
-            <Instagram className="w-5 h-5 text-zinc-400" />
-            <span>{displayData?.instagram || 'rakibulhasantuhiin'}</span>
-          </div>
-
-          <div className="flex items-center gap-3 pt-2">
-            <div className="flex -space-x-2">
-              {[1, 2, 3].map(i => (
-                <div key={i} className="w-8 h-8 rounded-full bg-zinc-200 border-2 border-white shadow-sm overflow-hidden">
-                  <img src={`https://picsum.photos/seed/friend${i}/100/100`} alt="Friend" className="w-full h-full object-cover" />
-                </div>
-              ))}
-            </div>
-            <span className="text-sm font-bold text-zinc-800">Friends with things in common</span>
+          <div className="text-zinc-600 text-sm">
+            @{displayData?.firstName?.toLowerCase()}{displayData?.lastName?.toLowerCase()} • {displayData?.category || 'Digital Curator & Visual Storyteller'}
           </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="mt-8">
+        <div className="flex gap-3 mb-6">
           {isOwnProfile ? (
-            <div className="space-y-3">
+            <>
               <button 
                 onClick={() => setIsCreatePostOpen?.(true)}
-                className="w-full bg-primary text-white py-4 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 shadow-xl shadow-primary/25 flex items-center justify-center gap-3"
+                className="flex-1 bg-primary text-white py-2.5 rounded-full font-bold text-xs uppercase tracking-wider hover:bg-primary-hover transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-sm shadow-primary/20"
               >
-                <Plus className="w-5 h-5" /> Create Post
+                <Plus className="w-4 h-4" strokeWidth={3} /> Add to Story
               </button>
-              <div className="grid grid-cols-2 gap-3">
-                <button 
-                  onClick={() => showToast('Dashboard coming soon')}
-                  className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95"
-                >
-                  Dashboard
-                </button>
-                <button 
-                  onClick={() => setIsEditModalOpen(true)}
-                  className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95"
-                >
-                  Edit Profile
-                </button>
-              </div>
-            </div>
+              <button 
+                onClick={() => setIsEditModalOpen(true)}
+                className="flex-1 bg-zinc-100 text-zinc-700 py-2.5 rounded-full font-bold text-xs uppercase tracking-wider hover:bg-zinc-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                <Pencil className="w-4 h-4" /> Edit Profile
+              </button>
+            </>
           ) : (
-            <div className="flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-3">
-                {/* Friend Status Button */}
-                {friendStatus === 'friends' ? (
-                  <button 
-                    className="bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 flex items-center justify-center gap-2"
-                    onClick={() => showToast('Friendship options coming soon')}
-                  >
-                    <UserCheck className="w-4 h-4" /> Friends
-                  </button>
-                ) : friendStatus === 'sent' ? (
-                  <button 
-                    onClick={handleCancelRequest}
-                    disabled={friendshipLoading}
-                    className="bg-zinc-100 text-zinc-500 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 flex items-center justify-center gap-2"
-                  >
-                    {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />} Cancel
-                  </button>
-                ) : friendStatus === 'received' ? (
-                  <button 
-                    onClick={handleAcceptRequest}
-                    disabled={friendshipLoading}
-                    className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
-                  >
-                    {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Accept
-                  </button>
-                ) : (
-                  <button 
-                    onClick={handleAddFriend}
-                    disabled={friendshipLoading}
-                    className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
-                  >
-                    {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Add Friend
-                  </button>
-                )}
-
-                {/* Message Button */}
-                <button 
-                  onClick={handleMessage}
-                  className="bg-primary text-white py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 shadow-lg shadow-primary/20"
-                >
-                  <MessageSquare className="w-4 h-4" /> Message
-                </button>
-              </div>
-
-              {/* Follow Button */}
+            <>
               <button 
                 onClick={handleFollow}
                 disabled={followLoading}
                 className={cn(
-                  "w-full py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95 shadow-lg",
+                  "flex-1 py-2.5 rounded-full font-bold text-xs uppercase tracking-wider transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-sm",
                   isFollowing 
-                    ? "bg-zinc-100 text-zinc-900 hover:bg-zinc-200" 
-                    : "bg-zinc-900 text-white hover:bg-zinc-800 shadow-zinc-900/20"
+                    ? "bg-zinc-100 text-zinc-700 hover:bg-zinc-200" 
+                    : "bg-primary text-white hover:bg-primary-hover shadow-primary/20"
                 )}
               >
-                {followLoading ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : isFollowing ? 'Following' : 'Follow'}
+                {followLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : isFollowing ? 'Following' : (
+                  <><UserPlus className="w-4 h-4" /> Follow</>
+                )}
               </button>
-            </div>
+              <button 
+                onClick={handleMessage}
+                className="flex-1 bg-zinc-100 text-zinc-700 py-2.5 rounded-full font-bold text-xs uppercase tracking-wider hover:bg-zinc-200 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                <MessageSquare className="w-4 h-4" /> Message
+              </button>
+            </>
           )}
         </div>
-        <div className="mt-3">
-          <button 
-            onClick={() => showToast('Advertise coming soon')}
-            className="w-full bg-zinc-100 text-zinc-900 py-3.5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-zinc-200 transition-all active:scale-95 flex items-center justify-center gap-3"
-          >
-            <Flag className="w-4 h-4" /> Advertise
-          </button>
-        </div>
-      </div>
 
-      <div className="mt-8 px-5 sm:px-8">
+        {/* Bio Card */}
+        <div className="bg-white rounded-3xl p-5 shadow-sm border border-zinc-100 mb-6">
+          <p className="text-zinc-700 italic text-[15px] leading-relaxed mb-6">
+            "{displayData?.bio || 'Exploring the intersection of technology and human emotion through pixels. Based in Barcelona. Always looking for the next hidden gem in the city. ✨'}"
+          </p>
+          
+          <div className="flex items-center justify-center gap-8">
+            <div className="text-center">
+              <div className="text-xl font-bold text-primary">
+                {displayData?.followers >= 1000 ? `${(displayData.followers / 1000).toFixed(1)}k` : (displayData?.followers || '12.4k')}
+              </div>
+              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Followers</div>
+            </div>
+            <div className="w-px h-8 bg-zinc-200"></div>
+            <div className="text-center">
+              <div className="text-xl font-bold text-primary">
+                {displayData?.following || '842'}
+              </div>
+              <div className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">Following</div>
+            </div>
+          </div>
+        </div>
+
         {/* Tabs */}
-        <div className="flex gap-8 border-b border-zinc-100 overflow-x-auto no-scrollbar pb-1">
-          {['All', 'Reels', 'Photos', 'Events'].map((tab) => (
+        <div className="flex justify-between border-b border-zinc-200 mb-6">
+          {['Posts', 'Photos', 'About', ...(isOwnProfile ? ['Saved'] : [])].map((tab) => (
             <button 
               key={tab} 
               onClick={() => setActiveTab(tab)}
               className={cn(
-                "pb-3 px-1 text-sm font-black uppercase tracking-widest relative transition-all",
-                activeTab === tab ? "text-primary" : "text-zinc-400 hover:text-zinc-600"
+                "pb-3 px-2 text-xs font-bold uppercase tracking-wider relative transition-all",
+                activeTab === tab ? "text-primary" : "text-zinc-500 hover:text-zinc-700"
               )}
             >
               {tab}
               {activeTab === tab && (
                 <motion.div 
-                  layoutId="activeTab"
-                  className="absolute bottom-0 left-0 w-full h-1 bg-primary rounded-t-full shadow-[0_0_8px_rgba(79,70,229,0.4)]" 
+                  layoutId="profileTab"
+                  className="absolute bottom-0 left-0 w-full h-0.5 bg-primary" 
                 />
               )}
             </button>
           ))}
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-8">
-          {/* Left Column: Details & Friends */}
-          <div className="lg:col-span-1 space-y-8">
-            <div className="bg-white border border-zinc-100 p-8 rounded-[2.5rem] shadow-sm">
-              <div className="flex justify-between items-center mb-6">
-                <h3 className="text-xl font-black text-zinc-900 tracking-tighter">Personal details</h3>
-                {isOwnProfile && <button onClick={() => setIsEditModalOpen(true)} className="text-zinc-400 hover:text-primary transition-colors"><Pencil className="w-5 h-5" /></button>}
+        {/* Content Area */}
+        {activeTab === 'Photos' ? (
+          <div className="space-y-3">
+            {postsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
               </div>
-              <div className="space-y-6">
-                {personalDetails.map((detail, i) => (
-                  <div key={i} className="flex items-center gap-4 text-zinc-600 group">
-                    <div className="w-12 h-12 rounded-2xl bg-zinc-50 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-                      <detail.icon className="w-6 h-6 text-zinc-400 group-hover:text-primary transition-colors" />
-                    </div>
-                    <span className="text-sm font-bold text-zinc-900">{detail.label}</span>
+            ) : filteredPosts.length > 0 ? (
+              <>
+                {/* Featured Photo */}
+                <div className="relative rounded-3xl overflow-hidden aspect-[4/3] group cursor-pointer">
+                  <img src={filteredPosts[0].image} alt="Featured" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                  <div className="absolute top-3 left-3 bg-white/20 backdrop-blur-md px-3 py-1 rounded-full border border-white/30">
+                    <span className="text-white text-[10px] font-bold uppercase tracking-widest">Featured</span>
                   </div>
-                ))}
-              </div>
-              <button className="w-full mt-8 py-3 rounded-2xl bg-zinc-50 text-zinc-500 font-black text-xs uppercase tracking-widest hover:bg-zinc-100 transition-all">See more details</button>
-              
-              <div className="mt-10 pt-10 border-t border-zinc-50">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-black text-zinc-900 tracking-tighter">Education</h3>
-                  {isOwnProfile && <button onClick={() => setIsEditModalOpen(true)} className="text-zinc-400 hover:text-primary transition-colors"><Pencil className="w-5 h-5" /></button>}
                 </div>
-                <div className="space-y-6">
-                  {educationDetails.map((detail, i) => (
-                    <div key={i} className="flex items-center gap-4 text-zinc-600 group">
-                      <div className="w-12 h-12 rounded-2xl bg-zinc-50 flex items-center justify-center group-hover:bg-primary/10 transition-colors">
-                        <detail.icon className="w-6 h-6 text-zinc-400 group-hover:text-primary transition-colors" />
-                      </div>
-                      <span className="text-sm font-bold text-zinc-900">{detail.label}</span>
+                
+                {/* Photo Grid */}
+                {filteredPosts.length > 1 && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-3">
+                      {filteredPosts.slice(1).filter((_, i) => i % 2 === 0).map((post, i) => (
+                        <div key={post.id} className={cn("rounded-3xl overflow-hidden cursor-pointer group", i % 2 === 0 ? "aspect-square" : "aspect-[3/4]")}>
+                          <img src={post.image} alt="Photo" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-10 pt-10 border-t border-zinc-50">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-black text-zinc-900 tracking-tighter">Hobbies</h3>
-                  {isOwnProfile && <button onClick={() => setIsEditModalOpen(true)} className="text-zinc-400 hover:text-primary transition-colors"><Pencil className="w-5 h-5" /></button>}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {hobbies.map((hobby, i) => (
-                    <span key={i} className="px-4 py-2 bg-zinc-50 text-zinc-800 text-xs font-bold rounded-xl border border-zinc-100">{hobby}</span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-10 pt-10 border-t border-zinc-50">
-                <div className="flex justify-between items-center mb-6">
-                  <h3 className="text-xl font-black text-zinc-900 tracking-tighter">Interests</h3>
-                  {isOwnProfile && <button onClick={() => setIsEditModalOpen(true)} className="text-zinc-400 hover:text-primary transition-colors"><Pencil className="w-5 h-5" /></button>}
-                </div>
-                <div className="space-y-4">
-                  <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">TV shows</p>
-                  {interests.map((interest, i) => (
-                    <div key={i} className="flex items-center gap-3 group cursor-pointer">
-                      <div className="w-10 h-10 bg-zinc-100 rounded-xl group-hover:bg-zinc-200 transition-colors"></div>
-                      <span className="text-sm font-bold text-zinc-900">{interest}</span>
+                    <div className="space-y-3">
+                      {filteredPosts.slice(1).filter((_, i) => i % 2 !== 0).map((post, i) => (
+                        <div key={post.id} className={cn("rounded-3xl overflow-hidden cursor-pointer group", i % 2 === 0 ? "aspect-[3/4]" : "aspect-square")}>
+                          <img src={post.image} alt="Photo" className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105" />
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <button className="w-full mt-6 py-3 rounded-2xl bg-zinc-50 text-zinc-500 font-black text-xs uppercase tracking-widest hover:bg-zinc-100 transition-all">See more</button>
-              </div>
-            </div>
-
-            {/* Friends Section */}
-            <div className="bg-white border border-zinc-100 p-8 rounded-[2.5rem] shadow-sm">
-              <div className="flex justify-between items-end mb-8">
-                <div>
-                  <h3 className="text-xl font-black text-zinc-900 tracking-tighter">Friends</h3>
-                  <p className="text-xs text-zinc-400 font-bold mt-1">1,248 friends</p>
-                </div>
-                <button className="text-primary font-black text-xs uppercase tracking-widest hover:underline">See all</button>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                {friendsLoading ? (
-                  [1, 2, 3, 4, 5, 6].map(i => (
-                    <div key={i} className="aspect-square bg-zinc-100 rounded-3xl animate-pulse" />
-                  ))
-                ) : friends.length > 0 ? (
-                  friends.map(friend => (
-                    <div 
-                      key={friend.id} 
-                      onClick={() => onViewProfile?.(friend.id)}
-                      className="flex flex-col gap-2 cursor-pointer group"
-                    >
-                      <div className="aspect-square rounded-3xl overflow-hidden bg-zinc-100 border-2 border-zinc-50 shadow-sm transition-all duration-500 group-hover:scale-105 group-hover:shadow-xl">
-                        {friend.avatar ? (
-                          <img src={friend.avatar} alt={friend.firstName} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center bg-zinc-50">
-                            <User className="w-8 h-8 text-zinc-200" />
-                          </div>
-                        )}
-                      </div>
-                      <span className="text-[11px] font-bold text-zinc-900 truncate px-1 text-center">
-                        {friend.firstName} {friend.lastName}
-                      </span>
-                    </div>
-                  ))
-                ) : (
-                  <div className="col-span-3 py-12 text-center text-zinc-400 text-[10px] font-black uppercase tracking-widest bg-zinc-50 rounded-[2.5rem] border-2 border-dashed border-zinc-200">
-                    No friends
                   </div>
                 )}
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column: Tabs & Posts */}
-          <div className="lg:col-span-2 space-y-8">
-            {/* Post Creation Area */}
-            {isOwnProfile && (
-              <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-zinc-100">
-                <div className="flex items-center gap-4 mb-6">
-                  <div className="w-14 h-14 rounded-full overflow-hidden bg-zinc-100 border-2 border-zinc-50 shadow-md">
-                    {avatar ? <img src={avatar} alt="Avatar" className="w-full h-full object-cover" /> : <User className="w-full h-full text-zinc-400 p-3" />}
-                  </div>
-                  <div 
-                    onClick={() => setIsCreatePostOpen?.(true)}
-                    className="flex-1 bg-zinc-50 hover:bg-zinc-100 transition-colors rounded-3xl px-6 py-4 text-zinc-400 font-bold text-base cursor-pointer"
-                  >
-                    What's on your mind?
-                  </div>
-                  <div 
-                    onClick={() => setIsCreatePostOpen?.(true)}
-                    className="w-12 h-12 bg-emerald-50 rounded-2xl flex items-center justify-center text-emerald-500 cursor-pointer hover:bg-emerald-100 transition-all"
-                  >
-                    <ImageIcon className="w-6 h-6" />
-                  </div>
+              </>
+            ) : (
+              <div className="text-center py-12 bg-white rounded-3xl border border-zinc-100 shadow-sm">
+                <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <ImageIcon className="w-8 h-8 text-zinc-300" />
                 </div>
-                <div className="flex gap-4 border-t border-zinc-50 pt-6">
-                  <button 
-                    onClick={() => setIsCreatePostOpen?.(true)}
-                    className="flex-1 flex items-center justify-center gap-3 py-3 rounded-2xl bg-rose-50 text-rose-600 font-black text-xs uppercase tracking-widest hover:bg-rose-100 transition-all active:scale-95"
-                  >
-                    <Video className="w-5 h-5" /> Reel
-                  </button>
-                  <button 
-                    onClick={() => setIsCreatePostOpen?.(true)}
-                    className="flex-1 flex items-center justify-center gap-3 py-3 rounded-2xl bg-indigo-50 text-indigo-600 font-black text-xs uppercase tracking-widest hover:bg-indigo-100 transition-all active:scale-95"
-                  >
-                    <UserCheck className="w-5 h-5" /> Live
-                  </button>
-                </div>
+                <p className="text-zinc-900 font-bold text-lg">No photos yet</p>
+                <p className="text-zinc-500 text-sm mt-1">When {displayData?.firstName} posts photos, they'll appear here.</p>
               </div>
             )}
-
-            <div className="flex justify-between items-center">
-              <h3 className="text-2xl font-black text-zinc-900 tracking-tighter">All posts</h3>
-              <button className="text-primary font-black text-xs uppercase tracking-widest hover:underline">Filters</button>
-            </div>
-
-            <button className="w-full bg-white p-5 rounded-[2rem] shadow-sm border border-zinc-100 flex items-center justify-center gap-3 font-black text-xs text-zinc-900 uppercase tracking-widest hover:bg-zinc-50 transition-all active:scale-[0.98]">
-              <FileText className="w-5 h-5 text-primary" /> Manage posts
-            </button>
-
-            {/* Posts Section */}
-            <div className="space-y-8">
-              {postsLoading ? (
-                <div className="flex justify-center py-24">
-                  <Loader2 className="w-12 h-12 text-primary animate-spin" />
+          </div>
+        ) : activeTab === 'Posts' ? (
+          <div className="space-y-6">
+            {postsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              </div>
+            ) : filteredPosts.length > 0 ? (
+              filteredPosts.map(post => (
+                <PostCard key={post.id} post={post} onViewProfile={onViewProfile} />
+              ))
+            ) : (
+              <div className="text-center py-12 bg-white rounded-3xl border border-zinc-100 shadow-sm">
+                <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <FileText className="w-8 h-8 text-zinc-300" />
                 </div>
-              ) : filteredPosts.length > 0 ? (
-                filteredPosts.map(post => (
-                  <PostCard key={post.id} post={post} onViewProfile={onViewProfile} />
-                ))
-              ) : (
-                <div className="text-center py-24 bg-white rounded-[3rem] border border-zinc-100 shadow-sm relative overflow-hidden group">
-                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-                  <div className="w-24 h-24 bg-zinc-50 rounded-[2rem] flex items-center justify-center mx-auto mb-6 group-hover:scale-110 group-hover:rotate-12 transition-all duration-500">
-                    <FileText className="w-12 h-12 text-zinc-200 group-hover:text-primary transition-colors" />
+                <p className="text-zinc-900 font-bold text-lg">No posts yet</p>
+                <p className="text-zinc-500 text-sm mt-1">When {displayData?.firstName} posts, you'll see it here.</p>
+              </div>
+            )}
+          </div>
+        ) : activeTab === 'About' ? (
+          <div className="space-y-4">
+            <div className="bg-white rounded-3xl p-6 shadow-sm border border-zinc-100">
+              <h3 className="text-lg font-bold text-zinc-900 mb-4">About {displayData?.firstName}</h3>
+              
+              <div className="space-y-4">
+                {displayData?.bio && (
+                  <div className="flex gap-3">
+                    <FileText className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">Bio</p>
+                      <p className="text-sm text-zinc-600 mt-1">{displayData.bio}</p>
+                    </div>
                   </div>
-                  <p className="text-zinc-900 font-black text-2xl tracking-tighter uppercase">No signals detected</p>
-                  <p className="text-zinc-400 text-[10px] font-black uppercase tracking-widest mt-2">Initialize your first transmission to begin.</p>
+                )}
+                
+                {displayData?.category && (
+                  <div className="flex gap-3">
+                    <Briefcase className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">Category</p>
+                      <p className="text-sm text-zinc-600 mt-1">{displayData.category}</p>
+                    </div>
+                  </div>
+                )}
+                
+                {displayData?.location && (
+                  <div className="flex gap-3">
+                    <MapPin className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">Location</p>
+                      <p className="text-sm text-zinc-600 mt-1">{displayData.location}</p>
+                    </div>
+                  </div>
+                )}
+                
+                {displayData?.hometown && (
+                  <div className="flex gap-3">
+                    <Home className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">Hometown</p>
+                      <p className="text-sm text-zinc-600 mt-1">{displayData.hometown}</p>
+                    </div>
+                  </div>
+                )}
+                
+                {displayData?.college && (
+                  <div className="flex gap-3">
+                    <GraduationCap className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">College</p>
+                      <p className="text-sm text-zinc-600 mt-1">{displayData.college}</p>
+                    </div>
+                  </div>
+                )}
+                
+                {displayData?.instagram && (
+                  <div className="flex gap-3">
+                    <Instagram className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">Instagram</p>
+                      <a href={`https://instagram.com/${displayData.instagram.replace('@', '')}`} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline mt-1 block">
+                        @{displayData.instagram.replace('@', '')}
+                      </a>
+                    </div>
+                  </div>
+                )}
+                
+                {displayData?.website && (
+                  <div className="flex gap-3">
+                    <Globe className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900">Website</p>
+                      <a href={displayData.website.startsWith('http') ? displayData.website : `https://${displayData.website}`} target="_blank" rel="noopener noreferrer" className="text-sm text-primary hover:underline mt-1 block">
+                        {displayData.website}
+                      </a>
+                    </div>
+                  </div>
+                )}
+                
+                <div className="flex gap-3">
+                  <Calendar className="w-5 h-5 text-zinc-400 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-zinc-900">Joined</p>
+                    <p className="text-sm text-zinc-600 mt-1">
+                      {displayData?.createdAt ? new Date(displayData.createdAt.seconds * 1000).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Recently'}
+                    </p>
+                  </div>
                 </div>
-              )}
+              </div>
             </div>
           </div>
-        </div>
+        ) : activeTab === 'Saved' ? (
+          <div className="space-y-6">
+            {savedPostsLoading ? (
+              <div className="flex justify-center py-12">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+              </div>
+            ) : savedPosts.length > 0 ? (
+              savedPosts.map(post => (
+                <PostCard key={post.id} post={post} onViewProfile={onViewProfile} />
+              ))
+            ) : (
+              <div className="text-center py-12 bg-white rounded-3xl border border-zinc-100 shadow-sm">
+                <div className="w-16 h-16 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Bookmark className="w-8 h-8 text-zinc-300" />
+                </div>
+                <p className="text-zinc-900 font-bold text-lg">No saved posts</p>
+                <p className="text-zinc-500 text-sm mt-1">Posts you save will appear here.</p>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="text-center py-12 bg-white rounded-3xl border border-zinc-100 shadow-sm">
+            <p className="text-zinc-500 text-sm">Content for {activeTab} will appear here.</p>
+          </div>
+        )}
       </div>
       {/* Toast Notification */}
       <AnimatePresence>

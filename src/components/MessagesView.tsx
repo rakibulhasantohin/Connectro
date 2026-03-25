@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db, auth } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { 
   collection, 
   query, 
@@ -105,20 +105,24 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
         const otherUserId = data.participants.find(id => id !== user.uid);
         
         if (otherUserId) {
-          const userDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', otherUserId), limit(1)));
-          const otherUser = userDoc.docs[0]?.data();
-          chatsData.push({
-            ...data,
-            id: chatDoc.id,
-            otherUser
-          });
+          try {
+            const userDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', otherUserId), limit(1)));
+            const otherUser = userDoc.docs[0]?.data();
+            chatsData.push({
+              ...data,
+              id: chatDoc.id,
+              otherUser
+            });
+          } catch (error) {
+            handleFirestoreError(error, OperationType.LIST, 'users');
+          }
         }
       }
       
       setChats(chatsData);
       setLoading(false);
     }, (error) => {
-      console.error("Error fetching chats:", error);
+      handleFirestoreError(error, OperationType.LIST, 'chats');
       setLoading(false);
     });
 
@@ -150,12 +154,18 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
       const idsToFetch = ids.slice(0, 10); // Limit to 10 for active users bar
       
       for (const friendId of idsToFetch) {
-        const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
-        if (!friendDoc.empty) {
-          friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+        try {
+          const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
+          if (!friendDoc.empty) {
+            friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
+          }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.LIST, 'users');
         }
       }
       setActiveUsers(friendDetails);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'friendships');
     });
     
     return () => unsubscribe();

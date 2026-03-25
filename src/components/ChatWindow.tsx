@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db, auth } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 import { 
   collection, 
   addDoc, 
@@ -81,6 +81,8 @@ const TimeAgo: React.FC<{ timestamp: any }> = ({ timestamp }) => {
   return <span>{timeAgo}</span>;
 };
 
+import { motion } from 'motion/react';
+
 export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBack }) => {
   const { user } = useUser();
   const [otherUserData, setOtherUserData] = useState<any>(otherUser);
@@ -137,7 +139,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
       setLoading(false);
       setTimeout(scrollToBottom, 100);
     }, (error) => {
-      console.error("Error fetching messages:", error);
+      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
       setLoading(false);
     });
 
@@ -268,7 +270,12 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
             const showAvatar = !isMe && (idx === 0 || messages[idx - 1].senderId !== msg.senderId);
             
             return (
-              <div key={msg.id} className={cn(
+              <motion.div 
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.2 }}
+                key={msg.id} 
+                className={cn(
                 "flex gap-2 max-w-[85%]",
                 isMe ? "ml-auto flex-row-reverse" : "mr-auto"
               )}>
@@ -306,7 +313,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
                     )}
                   </div>
                 </div>
-              </div>
+              </motion.div>
             );
           })
         )}

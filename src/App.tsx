@@ -14,7 +14,9 @@ import { MessagesView } from './components/MessagesView';
 import { AuthView } from './components/AuthView';
 import { OnboardingView } from './components/OnboardingView';
 import { CreatePostModal } from './components/CreatePostModal';
-import { Loader2 } from 'lucide-react';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { Loader2, Home, Play, Plus, Compass, User } from 'lucide-react';
+import { cn } from './lib/utils';
 
 function AppContent() {
   const [currentTab, setTab] = useState<TabType>('home');
@@ -49,7 +51,7 @@ function AppContent() {
   if (loading) {
     return (
       <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
-        <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
+        <Loader2 className="w-10 h-10 text-primary animate-spin" />
       </div>
     );
   }
@@ -63,9 +65,9 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-100 flex justify-center selection:bg-indigo-100 selection:text-indigo-900">
+    <div className="h-[100dvh] bg-zinc-100 flex justify-center selection:bg-primary/20 selection:text-primary overflow-hidden">
       {/* Mobile Container */}
-      <div className="w-full max-w-md bg-white min-h-screen relative shadow-2xl overflow-hidden flex flex-col border-x border-zinc-100">
+      <div className="w-full max-w-md bg-zinc-50 h-full relative shadow-2xl overflow-hidden flex flex-col border-x border-zinc-100">
         
         <Header 
           currentTab={currentTab} 
@@ -73,7 +75,7 @@ function AppContent() {
           onPlusClick={() => setIsCreatePostOpen(true)}
         />
         
-        <main className="flex-1 overflow-y-auto no-scrollbar bg-zinc-50">
+        <main className="flex-1 overflow-y-auto no-scrollbar pb-24">
           {currentTab === 'home' && (
             <HomeView 
               setTab={handleSetTab} 
@@ -111,6 +113,54 @@ function AppContent() {
           )}
         </main>
 
+        {/* Floating Bottom Navigation */}
+        <div className="absolute bottom-6 left-6 right-6 z-50">
+          <div className="bg-white rounded-[2rem] shadow-lg shadow-zinc-200/50 border border-zinc-100 p-2 flex justify-between items-center">
+            <button 
+              onClick={() => handleSetTab('home')}
+              className={cn(
+                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
+                currentTab === 'home' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+              )}
+            >
+              <Home className="w-6 h-6" strokeWidth={currentTab === 'home' ? 2.5 : 2} />
+            </button>
+            <button 
+              onClick={() => handleSetTab('reels')}
+              className={cn(
+                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
+                currentTab === 'reels' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+              )}
+            >
+              <Play className="w-6 h-6" strokeWidth={currentTab === 'reels' ? 2.5 : 2} />
+            </button>
+            <button 
+              onClick={() => setIsCreatePostOpen(true)}
+              className="w-14 h-14 bg-primary text-white rounded-full flex items-center justify-center shadow-lg shadow-primary/40 -mt-6 border-4 border-zinc-50 hover:scale-105 transition-transform active:scale-95"
+            >
+              <Plus className="w-7 h-7" strokeWidth={3} />
+            </button>
+            <button 
+              onClick={() => handleSetTab('dashboard')}
+              className={cn(
+                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
+                currentTab === 'dashboard' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+              )}
+            >
+              <Compass className="w-6 h-6" strokeWidth={currentTab === 'dashboard' ? 2.5 : 2} />
+            </button>
+            <button 
+              onClick={() => handleSetTab('profile')}
+              className={cn(
+                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
+                currentTab === 'profile' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+              )}
+            >
+              <User className="w-6 h-6" strokeWidth={currentTab === 'profile' ? 2.5 : 2} />
+            </button>
+          </div>
+        </div>
+
         <CreatePostModal 
           isOpen={isCreatePostOpen} 
           onClose={() => setIsCreatePostOpen(false)} 
@@ -122,34 +172,36 @@ function AppContent() {
 
 export default function App() {
   return (
-    <UserProvider>
-      <AppContent />
-      {/* Global styles */}
-      <style dangerouslySetInnerHTML={{__html: `
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        body {
-          font-family: 'Plus Jakarta Sans', sans-serif;
-          overscroll-behavior-y: contain;
-          background-color: #f4f4f5; /* zinc-100 */
-        }
-        .no-scrollbar::-webkit-scrollbar {
-          display: none;
-        }
-        .no-scrollbar {
-          -ms-overflow-style: none;
-          scrollbar-width: none;
-        }
-        
-        /* Smooth transitions for view switching */
-        main > * {
-          animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-        }
-        
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(20px) scale(0.98); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-      `}} />
-    </UserProvider>
+    <ErrorBoundary>
+      <UserProvider>
+        <AppContent />
+        {/* Global styles */}
+        <style dangerouslySetInnerHTML={{__html: `
+          @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+          body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            overscroll-behavior-y: contain;
+            background-color: #f4f4f5; /* zinc-100 */
+          }
+          .no-scrollbar::-webkit-scrollbar {
+            display: none;
+          }
+          .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+          }
+          
+          /* Smooth transitions for view switching */
+          main > * {
+            animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+          }
+          
+          @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px) scale(0.98); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+          }
+        `}} />
+      </UserProvider>
+    </ErrorBoundary>
   );
 }

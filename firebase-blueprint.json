@@ -22,10 +22,10 @@
       "description": "Established friendship between two users",
       "type": "object",
       "properties": {
-        "userIds": { "type": "array", "items": { "type": "string" } },
+        "uids": { "type": "array", "items": { "type": "string" } },
         "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userIds", "createdAt"]
+      "required": ["uids", "createdAt"]
     },
     "FriendRequest": {
       "title": "FriendRequest",
@@ -138,12 +138,37 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "userName", "type", "createdAt"]
+    },
+    "SavedPost": {
+      "title": "SavedPost",
+      "description": "Post saved by a user",
+      "type": "object",
+      "properties": {
+        "postId": { "type": "string" },
+        "savedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["postId", "savedAt"]
+    },
+    "Follow": {
+      "title": "Follow",
+      "description": "User follow relationship",
+      "type": "object",
+      "properties": {
+        "followerId": { "type": "string" },
+        "followingId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["followerId", "followingId", "createdAt"]
     }
   },
   "firestore": {
     "users/{userId}": {
       "schema": "User",
       "description": "User profiles"
+    },
+    "users/{userId}/savedPosts/{postId}": {
+      "schema": "SavedPost",
+      "description": "Posts saved by users"
     },
     "posts/{postId}": {
       "schema": "Post",
@@ -160,6 +185,10 @@
     "notifications/{notificationId}": {
       "schema": "Notification",
       "description": "User notifications"
+    },
+    "follows/{followId}": {
+      "schema": "Follow",
+      "description": "User follow relationships"
     },
     "friendships/{friendshipId}": {
       "schema": "Friendship",
