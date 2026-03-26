@@ -278,10 +278,18 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
     }
   };
   
-  const formatTime = (dateStr?: string) => {
-    if (!dateStr) return post.time || 'Just now';
+  const formatTime = (dateValue?: any) => {
+    if (!dateValue) return post.time || 'Just now';
     try {
-      const date = new Date(dateStr);
+      let date: Date;
+      if (typeof dateValue === 'string') {
+        date = new Date(dateValue);
+      } else if (dateValue && typeof dateValue.toDate === 'function') {
+        date = dateValue.toDate();
+      } else {
+        date = new Date(dateValue);
+      }
+      
       const now = new Date();
       const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
       

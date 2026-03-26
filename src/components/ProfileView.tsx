@@ -154,7 +154,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         const url = reader.result as string;
         setAvatar(url);
         try {
-          await updateDoc(doc(db, 'users', user.uid), { avatar: url });
+          const userRef = doc(db, 'users', user.uid);
+          await updateDoc(userRef, { avatar: url });
           
           // Create post for profile picture update
           await addDoc(collection(db, 'posts'), {
@@ -164,13 +165,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             text: `updated their profile picture.`,
             image: url,
             privacy: 'Public',
-            createdAt: new Date().toISOString(),
+            createdAt: serverTimestamp(),
             likes: 0,
             comments: 0,
             shares: 0
           });
+
+          // Increment postCount
+          await updateDoc(userRef, {
+            postCount: increment(1)
+          });
         } catch (err) {
-          console.error("Error updating avatar:", err);
+          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
         }
       };
       reader.readAsDataURL(file);
@@ -185,7 +191,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         const url = reader.result as string;
         setCover(url);
         try {
-          await updateDoc(doc(db, 'users', user.uid), { cover: url });
+          const userRef = doc(db, 'users', user.uid);
+          await updateDoc(userRef, { cover: url });
           
           // Create post for cover photo update
           await addDoc(collection(db, 'posts'), {
@@ -195,13 +202,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             text: `updated their cover photo.`,
             image: url,
             privacy: 'Public',
-            createdAt: new Date().toISOString(),
+            createdAt: serverTimestamp(),
             likes: 0,
             comments: 0,
             shares: 0
           });
+
+          // Increment postCount
+          await updateDoc(userRef, {
+            postCount: increment(1)
+          });
         } catch (err) {
-          console.error("Error updating cover:", err);
+          handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
         }
       };
       reader.readAsDataURL(file);

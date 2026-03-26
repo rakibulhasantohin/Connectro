@@ -60,16 +60,22 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   // Fetch following IDs
   useEffect(() => {
-    if (!user) return;
+    if (!user?.uid) {
+      setFollowingIds([]);
+      return;
+    }
+    console.log("Fetching following IDs for user:", user.uid);
     const q = query(
       collection(db, 'follows'), 
       where('followerId', '==', user.uid),
       limit(100)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log("Following IDs snapshot received, size:", snapshot.size);
       const ids = snapshot.docs.map(doc => doc.data().followingId);
       setFollowingIds(ids);
     }, (error) => {
+      console.error("Following IDs query failed:", error);
       handleFirestoreError(error, OperationType.LIST, 'follows');
     });
     return () => unsubscribe();

@@ -40,10 +40,13 @@ export class ErrorBoundary extends Component<Props, State> {
           if (parsed.error && parsed.operationType) {
             isFirestoreError = true;
             errorMessage = `Firestore Error: ${parsed.error} during ${parsed.operationType} on ${parsed.path || 'unknown path'}`;
+          } else {
+            errorMessage = this.state.error.message;
           }
         }
       } catch (e) {
-        // Not a JSON error message
+        // Not a JSON error message, use raw message
+        errorMessage = this.state.error?.message || errorMessage;
       }
 
       return (

@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, setPersistence, browserLocalPersistence } from 'firebase/auth';
-import { getFirestore, getDocFromServer, doc } from 'firebase/firestore';
+import { getFirestore, getDocFromServer, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
@@ -73,6 +73,21 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
+    console.log("Firestore connection test successful.");
+    
+    // Test write to follows
+    if (auth.currentUser) {
+      console.log("Attempting test write to follows for user:", auth.currentUser.uid);
+      try {
+        await setDoc(doc(db, 'follows', 'test_connection'), {
+          test: true,
+          timestamp: serverTimestamp()
+        });
+        console.log("Test write to follows successful.");
+      } catch (e) {
+        console.error("Test write to follows failed:", e);
+      }
+    }
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error("Please check your Firebase configuration.");
