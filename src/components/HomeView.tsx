@@ -23,7 +23,7 @@ import {
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, limit } from 'firebase/firestore';
 import { TabType } from '../data/dummy';
 import { PostCard } from './PostCard';
 import { MUSIC_OPTIONS } from '../constants';
@@ -61,7 +61,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
   // Fetch following IDs
   useEffect(() => {
     if (!user) return;
-    const q = query(collection(db, 'follows'), where('followerId', '==', user.uid));
+    const q = query(
+      collection(db, 'follows'), 
+      where('followerId', '==', user.uid),
+      limit(100)
+    );
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const ids = snapshot.docs.map(doc => doc.data().followingId);
       setFollowingIds(ids);

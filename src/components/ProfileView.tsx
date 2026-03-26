@@ -46,7 +46,7 @@ import Markdown from 'react-markdown';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp, serverTimestamp, getDocs } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, query, where, orderBy, onSnapshot, getDoc, limit, setDoc, deleteDoc, increment, Timestamp, serverTimestamp, getDocs, writeBatch } from 'firebase/firestore';
 import { PostCard } from './PostCard';
 import { motion, AnimatePresence } from 'motion/react';
 import { MUSIC_OPTIONS } from '../constants';
@@ -560,34 +560,40 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     console.log("Attempting to toggle follow:", { followId, isFollowing });
 
     try {
+      const batch = writeBatch(db);
+
       if (isFollowing) {
         // Unfollow
-        await deleteDoc(followRef);
-        await updateDoc(currentUserRef, { following: increment(-1) });
-        await updateDoc(targetUserRef, { followers: increment(-1) });
+        batch.delete(followRef);
+        batch.update(currentUserRef, { following: increment(-1) });
+        batch.update(targetUserRef, { followers: increment(-1) });
+        await batch.commit();
         console.log("Unfollowed successfully");
       } else {
         // Follow
-        await setDoc(followRef, {
+        batch.set(followRef, {
           followerId: user.uid,
           followingId: targetUserId,
-          createdAt: Timestamp.now()
+          createdAt: serverTimestamp()
         });
-        await updateDoc(currentUserRef, { following: increment(1) });
-        await updateDoc(targetUserRef, { followers: increment(1) });
-        console.log("Followed successfully");
+        batch.update(currentUserRef, { following: increment(1) });
+        batch.update(targetUserRef, { followers: increment(1) });
         
         // Create notification
-        await addDoc(collection(db, 'notifications'), {
+        const notificationRef = doc(collection(db, 'notifications'));
+        batch.set(notificationRef, {
           toUserId: targetUserId,
           fromUserId: user.uid,
           fromUserName: `${currentUserData?.firstName} ${currentUserData?.lastName}`,
           fromUserAvatar: currentUserData?.avatar || '',
           type: 'follow',
           postId: 'profile',
-          createdAt: Timestamp.now(),
+          createdAt: serverTimestamp(),
           read: false
         });
+
+        await batch.commit();
+        console.log("Followed successfully");
       }
     } catch (err) {
       console.error("Error toggling follow:", err);

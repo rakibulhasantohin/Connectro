@@ -27,9 +27,11 @@ export const AuthView: React.FC = () => {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
       
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      // Ensure user document exists
+      const userDocRef = doc(db, 'users', user.uid);
+      const userDoc = await getDoc(userDocRef);
       if (!userDoc.exists()) {
-        await setDoc(doc(db, 'users', user.uid), {
+        await setDoc(userDocRef, {
           uid: user.uid,
           email: user.email,
           displayName: user.displayName,
@@ -54,7 +56,22 @@ export const AuthView: React.FC = () => {
     setError('');
     try {
       if (isLogin) {
-        await signInWithEmailAndPassword(auth, email, password);
+        const result = await signInWithEmailAndPassword(auth, email, password);
+        // Ensure user document exists even on login
+        const userDocRef = doc(db, 'users', result.user.uid);
+        const userDoc = await getDoc(userDocRef);
+        if (!userDoc.exists()) {
+          await setDoc(userDocRef, {
+            uid: result.user.uid,
+            email: result.user.email,
+            displayName: result.user.displayName || email.split('@')[0],
+            onboardingCompleted: false,
+            followers: 0,
+            following: 0,
+            postCount: 0,
+            createdAt: new Date().toISOString()
+          });
+        }
       } else {
         if (!fullName) {
           setError('Please enter your full name');

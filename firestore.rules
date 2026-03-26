@@ -35,6 +35,12 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          ((request.auth.token.email == "rakibulhasantuhin@gmail.com" || request.auth.token.email == "rakibulhasantuhin010@gmail.com") && request.auth.token.email_verified == true));
+    }
+
     function isValidEmail(email) {
       return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
     }
@@ -140,8 +146,8 @@ service cloud.firestore {
                     (isOwner(userId) && isValidUser(request.resource.data) && 
                      request.resource.data.uid == resource.data.uid &&
                      request.resource.data.email == resource.data.email) ||
-                    (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followers', 'following', 'postCount']) &&
-                     request.resource.data.followers is number)
+                    (request.resource.data.diff(resource.data).affectedKeys().hasAny(['followers', 'following', 'postCount']) &&
+                     request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followers', 'following', 'postCount']))
       );
                     
       allow delete: if false; // Users cannot delete their accounts for now
@@ -188,7 +194,9 @@ service cloud.firestore {
     }
 
     match /follows/{followId} {
-      allow read: if isAuthenticated();
+      allow get: if isAuthenticated();
+      allow list: if isAuthenticated() && (request.query.limit <= 100) && 
+                   (resource.data.followerId == request.auth.uid || resource.data.followingId == request.auth.uid);
       allow create: if isAuthenticated() && request.resource.data.followerId == request.auth.uid;
       allow delete: if isAuthenticated() && resource.data.followerId == request.auth.uid;
     }

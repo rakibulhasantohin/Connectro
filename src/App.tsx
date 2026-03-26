@@ -69,11 +69,13 @@ function AppContent() {
       {/* Mobile Container */}
       <div className="w-full max-w-md bg-zinc-50 h-full relative shadow-2xl overflow-hidden flex flex-col border-x border-zinc-100">
         
-        <Header 
-          currentTab={currentTab} 
-          setTab={handleSetTab} 
-          onPlusClick={() => setIsCreatePostOpen(true)}
-        />
+        {currentTab !== 'menu' && (
+          <Header 
+            currentTab={currentTab} 
+            setTab={handleSetTab} 
+            onPlusClick={() => setIsCreatePostOpen(true)}
+          />
+        )}
         
         <main className="flex-1 overflow-y-auto no-scrollbar pb-24">
           {currentTab === 'home' && (

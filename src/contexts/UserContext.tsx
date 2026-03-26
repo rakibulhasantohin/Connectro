@@ -22,10 +22,16 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
+      console.log("Auth state changed:", u?.uid || "No user");
       setUser(u);
       if (!u) {
+        console.log("User is logged out");
         setUserData(null);
         setLoading(false);
+      } else {
+        console.log("User is logged in, fetching data for:", u.uid);
+        // If we have a user, we should be in a loading state until userData is fetched
+        setLoading(true);
       }
     });
     return () => unsubscribeAuth();
@@ -34,14 +40,18 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!user) return;
 
+    console.log("Attaching onSnapshot for user data:", user.uid);
     const unsubscribeDoc = onSnapshot(doc(db, 'users', user.uid), (doc) => {
       if (doc.exists()) {
+        console.log("User data loaded:", doc.data().firstName);
         setUserData(doc.data());
       } else {
+        console.warn("User document does not exist for:", user.uid);
         setUserData(null);
       }
       setLoading(false);
     }, (error) => {
+      console.error("Error fetching user data:", error);
       handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
       setLoading(false);
     });

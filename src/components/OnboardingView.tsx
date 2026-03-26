@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { db, auth } from '../firebase';
-import { doc, updateDoc, collection, addDoc, getDoc, increment } from 'firebase/firestore';
+import { doc, updateDoc, collection, addDoc, getDoc, increment, setDoc } from 'firebase/firestore';
 import { Camera, MapPin, GraduationCap, Briefcase, Calendar, User, ArrowRight, Loader2, Upload, Plus } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { compressImage } from '../utils/imageCompressor';
@@ -62,11 +62,11 @@ export const OnboardingView: React.FC<{ onComplete: () => void }> = ({ onComplet
           const fullName = `${formData.firstName} ${formData.lastName}`.trim() || user.displayName || 'User';
           
           // Update user doc immediately
-          await updateDoc(doc(db, 'users', user.uid), {
+          await setDoc(doc(db, 'users', user.uid), {
             [field]: imageUrl,
             postCount: increment(1),
             updatedAt: new Date().toISOString()
-          });
+          }, { merge: true });
 
           // Create post immediately
           await addDoc(collection(db, 'posts'), {
@@ -117,7 +117,7 @@ export const OnboardingView: React.FC<{ onComplete: () => void }> = ({ onComplet
         const user = auth.currentUser;
         if (user) {
           // Final update for onboarding completion and other fields
-          await updateDoc(doc(db, 'users', user.uid), {
+          await setDoc(doc(db, 'users', user.uid), {
             firstName: formData.firstName,
             lastName: formData.lastName,
             dob: formData.dob,
@@ -129,7 +129,7 @@ export const OnboardingView: React.FC<{ onComplete: () => void }> = ({ onComplet
             cover: formData.cover,
             onboardingCompleted: true,
             updatedAt: new Date().toISOString()
-          });
+          }, { merge: true });
 
           onComplete();
         }
