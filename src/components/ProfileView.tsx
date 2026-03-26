@@ -973,6 +973,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           ) : (
             <>
               <button 
+                onClick={
+                  friendStatus === 'none' ? handleAddFriend :
+                  friendStatus === 'sent' ? handleCancelRequest :
+                  friendStatus === 'received' ? handleAcceptRequest :
+                  () => {}
+                }
+                disabled={friendshipLoading || friendStatus === 'friends'}
+                className={cn(
+                  "flex-1 py-2.5 rounded-full font-bold text-xs uppercase tracking-wider transition-all active:scale-[0.98] flex items-center justify-center gap-2 shadow-sm",
+                  friendStatus === 'none' ? "bg-primary text-white hover:bg-primary-hover shadow-primary/20" :
+                  friendStatus === 'sent' ? "bg-zinc-100 text-zinc-700 hover:bg-zinc-200" :
+                  friendStatus === 'received' ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20" :
+                  "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+                )}
+              >
+                {friendshipLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 
+                 friendStatus === 'none' ? <><UserPlus className="w-4 h-4" /> Connect</> :
+                 friendStatus === 'sent' ? 'Requested' :
+                 friendStatus === 'received' ? 'Accept' :
+                 'Friends'}
+              </button>
+              <button 
                 onClick={handleFollow}
                 disabled={followLoading}
                 className={cn(

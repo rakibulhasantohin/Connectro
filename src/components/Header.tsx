@@ -41,13 +41,6 @@ export const Header: React.FC<HeaderProps> = ({ currentTab, setTab, onPlusClick 
           <button className="text-zinc-700 hover:text-primary transition-colors active:scale-90">
             <Search className="w-6 h-6" />
           </button>
-          <button 
-            onClick={() => setTab('notifications')}
-            className="text-zinc-700 hover:text-primary transition-colors active:scale-90 relative"
-          >
-            <Bell className="w-6 h-6" />
-            <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white"></span>
-          </button>
         </div>
       </div>
     </div>

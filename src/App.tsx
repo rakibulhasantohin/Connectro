@@ -15,7 +15,7 @@ import { AuthView } from './components/AuthView';
 import { OnboardingView } from './components/OnboardingView';
 import { CreatePostModal } from './components/CreatePostModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Loader2, Home, Play, Plus, Compass, User } from 'lucide-react';
+import { Loader2, Home, Play, Plus, Compass, User, Bell } from 'lucide-react';
 import { cn } from './lib/utils';
 
 function AppContent() {
@@ -95,7 +95,7 @@ function AppContent() {
           )}
           {currentTab === 'groups' && <GroupsView />}
           {currentTab === 'dashboard' && <DashboardView />}
-          {currentTab === 'notifications' && <NotificationsView />}
+          {currentTab === 'notifications' && <NotificationsView onViewProfile={handleViewProfile} />}
           {currentTab === 'messages' && (
             <MessagesView 
               onViewProfile={handleViewProfile} 
@@ -115,50 +115,55 @@ function AppContent() {
           )}
         </main>
 
-        {/* Floating Bottom Navigation */}
-        <div className="absolute bottom-6 left-6 right-6 z-50">
-          <div className="bg-white rounded-[2rem] shadow-lg shadow-zinc-200/50 border border-zinc-100 p-2 flex justify-between items-center">
+        {/* Fixed Bottom Navigation */}
+        <div className="absolute bottom-0 left-0 right-0 z-50 bg-white border-t border-zinc-200 pb-[env(safe-area-inset-bottom)]">
+          <div className="flex justify-around items-center h-14 px-1">
             <button 
               onClick={() => handleSetTab('home')}
               className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
-                currentTab === 'home' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+                "flex-1 h-full flex items-center justify-center transition-all",
+                currentTab === 'home' ? "text-primary" : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
               )}
             >
-              <Home className="w-6 h-6" strokeWidth={currentTab === 'home' ? 2.5 : 2} />
+              <Home className="w-7 h-7" strokeWidth={currentTab === 'home' ? 2.5 : 2} />
             </button>
             <button 
               onClick={() => handleSetTab('reels')}
               className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
-                currentTab === 'reels' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+                "flex-1 h-full flex items-center justify-center transition-all",
+                currentTab === 'reels' ? "text-primary" : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
               )}
             >
-              <Play className="w-6 h-6" strokeWidth={currentTab === 'reels' ? 2.5 : 2} />
+              <Play className="w-7 h-7" strokeWidth={currentTab === 'reels' ? 2.5 : 2} />
             </button>
             <button 
               onClick={() => setIsCreatePostOpen(true)}
-              className="w-14 h-14 bg-primary text-white rounded-full flex items-center justify-center shadow-lg shadow-primary/40 -mt-6 border-4 border-zinc-50 hover:scale-105 transition-transform active:scale-95"
+              className="flex-1 h-full flex items-center justify-center transition-all"
             >
-              <Plus className="w-7 h-7" strokeWidth={3} />
+              <div className="w-10 h-10 bg-primary text-white rounded-full flex items-center justify-center shadow-sm active:scale-95 transition-transform">
+                <Plus className="w-6 h-6" strokeWidth={2.5} />
+              </div>
             </button>
             <button 
-              onClick={() => handleSetTab('dashboard')}
+              onClick={() => handleSetTab('notifications')}
               className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
-                currentTab === 'dashboard' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+                "flex-1 h-full flex items-center justify-center transition-all relative",
+                currentTab === 'notifications' ? "text-primary" : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
               )}
             >
-              <Compass className="w-6 h-6" strokeWidth={currentTab === 'dashboard' ? 2.5 : 2} />
+              <div className="relative">
+                <Bell className="w-7 h-7" strokeWidth={currentTab === 'notifications' ? 2.5 : 2} />
+                <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-primary rounded-full ring-2 ring-white"></span>
+              </div>
             </button>
             <button 
               onClick={() => handleSetTab('profile')}
               className={cn(
-                "w-12 h-12 rounded-2xl flex items-center justify-center transition-all",
-                currentTab === 'profile' ? "bg-primary text-white shadow-md shadow-primary/30" : "text-zinc-400 hover:text-zinc-600 hover:bg-zinc-50"
+                "flex-1 h-full flex items-center justify-center transition-all",
+                currentTab === 'profile' ? "text-primary" : "text-zinc-500 hover:text-zinc-800 hover:bg-zinc-50"
               )}
             >
-              <User className="w-6 h-6" strokeWidth={currentTab === 'profile' ? 2.5 : 2} />
+              <User className="w-7 h-7" strokeWidth={currentTab === 'profile' ? 2.5 : 2} />
             </button>
           </div>
         </div>

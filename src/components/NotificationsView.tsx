@@ -17,7 +17,11 @@ interface Notification {
   read: boolean;
 }
 
-export const NotificationsView: React.FC = () => {
+interface NotificationsViewProps {
+  onViewProfile?: (userId: string) => void;
+}
+
+export const NotificationsView: React.FC<NotificationsViewProps> = ({ onViewProfile }) => {
   const { user } = useUser();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,7 +144,11 @@ export const NotificationsView: React.FC = () => {
             {notifications.map(notif => {
               const { Icon, color } = getNotificationIcon(notif.type);
               return (
-                <div key={notif.id} className="flex gap-4 items-start p-4 rounded-[2.5rem] bg-white border border-zinc-100 hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5 transition-all cursor-pointer group">
+                <div 
+                  key={notif.id} 
+                  onClick={() => onViewProfile?.(notif.fromUserId)}
+                  className="flex gap-4 items-start p-4 rounded-[2.5rem] bg-white border border-zinc-100 hover:border-primary/20 hover:shadow-lg hover:shadow-primary/5 transition-all cursor-pointer group"
+                >
                   <div className="relative shrink-0">
                     <div className="w-14 h-14 rounded-2xl overflow-hidden border border-zinc-100 p-0.5 group-hover:rotate-3 transition-transform">
                       {notif.fromUserAvatar ? (

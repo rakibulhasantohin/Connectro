@@ -26,8 +26,9 @@ import {
 import { cn } from '../lib/utils';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { useUser } from '../contexts/UserContext';
-import { doc, updateDoc, addDoc, collection, Timestamp, increment, deleteDoc, onSnapshot, query, setDoc, getDocs } from 'firebase/firestore';
-import { Trash2 } from 'lucide-react';
+import { doc, updateDoc, addDoc, collection, Timestamp, increment, deleteDoc, onSnapshot, query, setDoc, getDocs, where, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { Trash2, Loader2, ChevronLeft, ChevronRight, Music } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface ReactionData {
   userId: string;
@@ -63,6 +64,203 @@ const REACTION_TYPES = [
   { type: 'wow', icon: Sparkles, color: 'text-yellow-500', bg: 'bg-yellow-50', label: 'Wow' },
   { type: 'angry', icon: Angry, color: 'text-orange-500', bg: 'bg-orange-50', label: 'Angry' },
 ];
+
+const ReactionUserItem: React.FC<{ 
+  reaction: ReactionData; 
+  onViewProfile?: (userId: string) => void;
+  onClose: () => void;
+}> = ({ reaction, onViewProfile, onClose }) => {
+  const { user, userData: currentUserData } = useUser();
+  const [friendStatus, setFriendStatus] = useState<'none' | 'sent' | 'received' | 'friends'>('none');
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user || user.uid === reaction.userId) {
+      setLoading(false);
+      return;
+    }
+
+    const friendshipId = [user.uid, reaction.userId].sort().join('_');
+    
+    // Listen for friendship
+    const unsubFriendship = onSnapshot(doc(db, 'friendships', friendshipId), (fDoc) => {
+      if (fDoc.exists()) {
+        setFriendStatus('friends');
+        setLoading(false);
+      } else {
+        // Check for outgoing request
+        const qOutgoing = query(
+          collection(db, 'friendRequests'),
+          where('fromUserId', '==', user.uid),
+          where('toUserId', '==', reaction.userId)
+        );
+        const unsubOutgoing = onSnapshot(qOutgoing, (outSnap) => {
+          if (!outSnap.empty) {
+            setFriendStatus('sent');
+            setRequestId(outSnap.docs[0].id);
+            setLoading(false);
+          } else {
+            // Check for incoming request
+            const qIncoming = query(
+              collection(db, 'friendRequests'),
+              where('fromUserId', '==', reaction.userId),
+              where('toUserId', '==', user.uid)
+            );
+            const unsubIncoming = onSnapshot(qIncoming, (inSnap) => {
+              if (!inSnap.empty) {
+                setFriendStatus('received');
+                setRequestId(inSnap.docs[0].id);
+              } else {
+                setFriendStatus('none');
+                setRequestId(null);
+              }
+              setLoading(false);
+            }, (error) => {
+              console.error("Error fetching incoming request:", error);
+              setLoading(false);
+            });
+          }
+        }, (error) => {
+          console.error("Error fetching outgoing request:", error);
+          setLoading(false);
+        });
+      }
+    }, (error) => {
+      console.error("Error fetching friendship:", error);
+      setLoading(false);
+    });
+
+    return () => unsubFriendship();
+  }, [user, reaction.userId]);
+
+  const handleConnect = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!user || !currentUserData || loading || user.uid === reaction.userId) return;
+    setLoading(true);
+
+    try {
+      if (friendStatus === 'none') {
+        // Send request
+        await addDoc(collection(db, 'friendRequests'), {
+          fromUserId: user.uid,
+          toUserId: reaction.userId,
+          status: 'pending',
+          createdAt: serverTimestamp()
+        });
+
+        // Create notification
+        await addDoc(collection(db, 'notifications'), {
+          toUserId: reaction.userId,
+          fromUserId: user.uid,
+          fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
+          fromUserAvatar: currentUserData.avatar || '',
+          type: 'friend_request',
+          text: 'sent you a friend request',
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      } else if (friendStatus === 'received' && requestId) {
+        // Accept request
+        const batch = writeBatch(db);
+        const friendshipId = [user.uid, reaction.userId].sort().join('_');
+        
+        batch.delete(doc(db, 'friendRequests', requestId));
+        batch.set(doc(db, 'friendships', friendshipId), {
+          uids: [user.uid, reaction.userId],
+          createdAt: serverTimestamp()
+        });
+        batch.set(doc(db, 'chats', friendshipId), {
+          participants: [user.uid, reaction.userId],
+          lastMessage: 'You are now friends! Say hi.',
+          lastMessageAt: serverTimestamp(),
+          unreadCount: {
+            [user.uid]: 0,
+            [reaction.userId]: 0
+          }
+        });
+        
+        const notificationRef = doc(collection(db, 'notifications'));
+        batch.set(notificationRef, {
+          toUserId: reaction.userId,
+          fromUserId: user.uid,
+          fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
+          fromUserAvatar: currentUserData.avatar || '',
+          type: 'friend_accept',
+          text: 'accepted your friend request',
+          read: false,
+          createdAt: serverTimestamp()
+        });
+
+        await batch.commit();
+      }
+    } catch (error) {
+      console.error("Error in handleConnect:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div 
+      onClick={() => { onClose(); onViewProfile?.(reaction.userId); }}
+      className="flex items-center justify-between px-5 py-4 hover:bg-zinc-50 transition-colors cursor-pointer group"
+    >
+      <div className="flex items-center gap-3">
+        <div className="relative">
+          <div className="w-12 h-12 rounded-[1.2rem] overflow-hidden border-2 border-zinc-50 group-hover:border-primary/30 transition-all duration-500">
+            {reaction.userAvatar ? (
+              <img 
+                src={reaction.userAvatar} 
+                alt={reaction.userName} 
+                className="w-full h-full object-cover" 
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
+                <User className="w-5 h-5 text-zinc-400" />
+              </div>
+            )}
+          </div>
+          <div className={cn(
+            "absolute -bottom-1 -right-1 rounded-lg p-1 border-2 border-white shadow-sm",
+            REACTION_TYPES.find(r => r.type === reaction.type)?.bg || 'bg-rose-500'
+          )}>
+            {(() => {
+              const Icon = REACTION_TYPES.find(r => r.type === reaction.type)?.icon || Heart;
+              return <Icon className={cn("w-2.5 h-2.5 fill-current", REACTION_TYPES.find(r => r.type === reaction.type)?.color || 'text-white')} />;
+            })()}
+          </div>
+        </div>
+        <div className="flex flex-col">
+          <span className="font-bold text-[15px] text-zinc-900 leading-tight">{reaction.userName}</span>
+          {user?.uid === reaction.userId && (
+            <span className="text-[10px] font-black text-primary uppercase tracking-widest">You</span>
+          )}
+        </div>
+      </div>
+      {user?.uid !== reaction.userId && (
+        <button 
+          onClick={handleConnect}
+          disabled={loading || friendStatus === 'sent' || friendStatus === 'friends'}
+          className={cn(
+            "px-5 py-2 rounded-xl font-bold text-xs transition-all active:scale-90 shadow-md",
+            friendStatus === 'none' ? "bg-primary text-white hover:bg-primary-hover shadow-primary/20" :
+            friendStatus === 'sent' ? "bg-zinc-100 text-zinc-500 shadow-none cursor-default" :
+            friendStatus === 'received' ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20" :
+            "bg-zinc-100 text-zinc-500 shadow-none cursor-default"
+          )}
+        >
+          {loading ? '...' : 
+           friendStatus === 'none' ? 'Connect' : 
+           friendStatus === 'sent' ? 'Requested' : 
+           friendStatus === 'received' ? 'Accept' : 
+           'Friends'}
+        </button>
+      )}
+    </div>
+  );
+};
 
 export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
   const { userData } = useUser();
@@ -705,41 +903,12 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
             </div>
             <div className="max-h-[60vh] overflow-y-auto no-scrollbar">
               {reactions.map((reaction) => (
-                <div key={reaction.userId} className="flex items-center justify-between px-5 py-4 hover:bg-zinc-50 transition-colors cursor-pointer group">
-                  <div className="flex items-center gap-3">
-                    <div className="relative">
-                      <div className="w-12 h-12 rounded-[1.2rem] overflow-hidden border-2 border-zinc-50 group-hover:border-primary/30 transition-all duration-500">
-                        {reaction.userAvatar ? (
-                          <img 
-                            src={reaction.userAvatar} 
-                            alt={reaction.userName} 
-                            className="w-full h-full object-cover" 
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : (
-                          <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                            <User className="w-5 h-5 text-zinc-400" />
-                          </div>
-                        )}
-                      </div>
-                      <div className={cn(
-                        "absolute -bottom-1 -right-1 rounded-lg p-1 border-2 border-white shadow-sm",
-                        REACTION_TYPES.find(r => r.type === reaction.type)?.bg || 'bg-rose-500'
-                      )}>
-                        {(() => {
-                          const Icon = REACTION_TYPES.find(r => r.type === reaction.type)?.icon || Heart;
-                          return <Icon className={cn("w-2.5 h-2.5 fill-current", REACTION_TYPES.find(r => r.type === reaction.type)?.color || 'text-white')} />;
-                        })()}
-                      </div>
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="font-bold text-[15px] text-zinc-900 leading-tight">{reaction.userName}</span>
-                    </div>
-                  </div>
-                  <button className="bg-primary text-white px-5 py-2 rounded-xl font-bold text-xs hover:bg-primary-hover transition-all active:scale-90 shadow-md shadow-primary/20">
-                    Connect
-                  </button>
-                </div>
+                <ReactionUserItem 
+                  key={reaction.userId} 
+                  reaction={reaction} 
+                  onViewProfile={onViewProfile}
+                  onClose={() => setShowLikes(false)}
+                />
               ))}
             </div>
           </div>
