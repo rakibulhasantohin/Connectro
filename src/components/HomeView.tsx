@@ -27,6 +27,7 @@ import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp,
 import { TabType } from '../data/dummy';
 import { PostCard } from './PostCard';
 import { MUSIC_OPTIONS } from '../constants';
+import { StoryEditor } from './StoryEditor';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface HomeViewProps {
@@ -57,6 +58,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const storyIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [feedTab, setFeedTab] = useState<'for-you' | 'following'>('for-you');
   const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const [selectedStoryFile, setSelectedStoryFile] = useState<File | null>(null);
 
   // Fetch following IDs
   useEffect(() => {
@@ -223,47 +225,61 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const handleAddStory = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file && user && userData) {
-      setUploadingStory(true);
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        try {
-          const compressedImage = await compressImage(reader.result as string);
-          await addDoc(collection(db, 'stories'), {
-            userId: user.uid,
-            userName: `${userData.firstName} ${userData.lastName}`,
-            userAvatar: userData.avatar || '',
-            image: compressedImage,
-            music: selectedMusic,
-            createdAt: serverTimestamp(),
-            type: file.type.startsWith('video') ? 'video' : 'image'
-          });
-          setSelectedMusic(null);
-          setShowMusicPicker(false);
-        } catch (error) {
-          console.error("Error adding story:", error);
-          throw new Error(JSON.stringify({
-            error: error instanceof Error ? error.message : String(error),
-            operationType: 'create',
-            path: 'stories',
-            authInfo: {
+      if (file.type.startsWith('image/')) {
+        setSelectedStoryFile(file);
+      } else {
+        // Handle video directly
+        setUploadingStory(true);
+        const reader = new FileReader();
+        reader.onloadend = async () => {
+          try {
+            await addDoc(collection(db, 'stories'), {
               userId: user.uid,
-              email: user.email,
-              emailVerified: user.emailVerified,
-              isAnonymous: user.isAnonymous,
-              tenantId: user.tenantId,
-              providerInfo: user.providerData.map(provider => ({
-                providerId: provider.providerId,
-                displayName: provider.displayName,
-                email: provider.email,
-                photoUrl: provider.photoURL
-              }))
-            }
-          }));
-        } finally {
-          setUploadingStory(false);
-        }
-      };
-      reader.readAsDataURL(file);
+              userName: `${userData.firstName} ${userData.lastName}`,
+              userAvatar: userData.avatar || '',
+              image: reader.result,
+              music: selectedMusic,
+              createdAt: serverTimestamp(),
+              type: 'video'
+            });
+            setSelectedMusic(null);
+            setShowMusicPicker(false);
+          } catch (error) {
+            console.error("Error adding story:", error);
+          } finally {
+            setUploadingStory(false);
+          }
+        };
+        reader.readAsDataURL(file);
+      }
+    }
+    // Reset input
+    if (e.target) e.target.value = '';
+  };
+
+  const handleShareStory = async (imageDataUrl: string) => {
+    if (!user || !userData) return;
+    
+    setUploadingStory(true);
+    setSelectedStoryFile(null);
+    
+    try {
+      const compressedImage = await compressImage(imageDataUrl);
+      await addDoc(collection(db, 'stories'), {
+        userId: user.uid,
+        userName: `${userData.firstName} ${userData.lastName}`,
+        userAvatar: userData.avatar || '',
+        image: compressedImage,
+        music: selectedMusic,
+        createdAt: serverTimestamp(),
+        type: 'image'
+      });
+      setSelectedMusic(null);
+      setShowMusicPicker(false);
+    } catch (error) {
+      console.error("Error adding story:", error);
+    } finally {
+      setUploadingStory(false);
     }
   };
 
@@ -286,6 +302,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
         className="hidden" 
         accept="image/*,video/*"
       />
+
+      {/* Story Editor */}
+      {selectedStoryFile && (
+        <StoryEditor 
+          file={selectedStoryFile} 
+          onShare={handleShareStory} 
+          onClose={() => setSelectedStoryFile(null)} 
+        />
+      )}
+
       {/* Feed Tabs */}
       <div className="px-6 py-4 bg-white border-b border-zinc-100 flex gap-6 sticky top-0 z-40">
         <button 
