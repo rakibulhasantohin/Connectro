@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { CommentModal } from './CommentModal';
 import { 
   Heart, 
   MessageCircle, 
@@ -16,18 +17,22 @@ import {
   User,
   Check,
   Edit2,
+  Trash2,
   Laugh,
   Sparkles,
   Angry,
   Lock,
   Users as UsersIcon,
-  ChevronDown
+  ChevronDown,
+  Loader2,
+  ChevronLeft,
+  ChevronRight,
+  Music
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
 import { useUser } from '../contexts/UserContext';
 import { doc, updateDoc, addDoc, collection, Timestamp, increment, deleteDoc, onSnapshot, query, setDoc, getDocs, where, writeBatch, serverTimestamp } from 'firebase/firestore';
-import { Trash2, Loader2, ChevronLeft, ChevronRight, Music } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ReactionData {
@@ -267,10 +272,12 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
   const [reactions, setReactions] = useState<ReactionData[]>([]);
   const [userReaction, setUserReaction] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [showComments, setShowComments] = useState(false);
   const [showLikes, setShowLikes] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [editedText, setEditedText] = useState(post.text);
   const [showMenu, setShowMenu] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
   const [showPrivacyMenu, setShowPrivacyMenu] = useState(false);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
@@ -394,23 +401,19 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
     }
   };
 
-  const handleComment = async () => {
-    try {
-      await updateDoc(doc(db, 'posts', post.id.toString()), {
-        comments: increment(1)
-      });
-      await createNotification('comment');
-    } catch (error) {
-      console.error("Error commenting:", error);
-    }
+  const handleComment = () => {
+    setShowComments(true);
   };
 
   const handleShare = async () => {
+    const shareUrl = `${window.location.origin}/post/${post.id}`;
     try {
+      await navigator.clipboard.writeText(shareUrl);
       await updateDoc(doc(db, 'posts', post.id.toString()), {
         shares: increment(1)
       });
       await createNotification('share');
+      alert('Link copied to clipboard!');
     } catch (error) {
       console.error("Error sharing:", error);
     }
@@ -458,7 +461,6 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
   };
 
   const handleDelete = async () => {
-    if (!window.confirm('Are you sure you want to delete this post?')) return;
     if (!postUserId) return;
 
     try {
@@ -613,6 +615,12 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
                   className="flex items-center gap-2 w-full px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 rounded-lg"
                 >
                   <Edit2 className="w-4 h-4" /> Edit Text
+                </button>
+                <button 
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete Post
                 </button>
                 
                 <div className="relative">
@@ -913,6 +921,21 @@ export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
             </div>
           </div>
         </div>
+      )}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 shadow-xl w-full max-w-sm">
+            <h3 className="text-lg font-bold text-zinc-900 mb-4">Delete Post?</h3>
+            <p className="text-zinc-600 mb-6">Are you sure you want to delete this post? This action cannot be undone.</p>
+            <div className="flex gap-3">
+              <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 bg-zinc-100 text-zinc-700 py-2 rounded-xl font-bold">Cancel</button>
+              <button onClick={handleDelete} className="flex-1 bg-red-500 text-white py-2 rounded-xl font-bold">Delete</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showComments && (
+        <CommentModal postId={post.id.toString()} onClose={() => setShowComments(false)} />
       )}
     </article>
   );

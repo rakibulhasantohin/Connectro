@@ -18,12 +18,13 @@ import {
   Globe,
   Camera,
   MapPin,
-  Users
+  Users,
+  Eye
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
 import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, limit } from 'firebase/firestore';
+import { collection, query, where, orderBy, onSnapshot, addDoc, serverTimestamp, Timestamp, limit, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { TabType } from '../data/dummy';
 import { PostCard } from './PostCard';
 import { MUSIC_OPTIONS } from '../constants';
@@ -58,6 +59,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const storyIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [feedTab, setFeedTab] = useState<'for-you' | 'following'>('for-you');
   const [followingIds, setFollowingIds] = useState<string[]>([]);
+  const [friendIds, setFriendIds] = useState<string[]>([]);
   const [selectedStoryFile, setSelectedStoryFile] = useState<File | null>(null);
 
   // Fetch following IDs
@@ -66,19 +68,40 @@ export const HomeView: React.FC<HomeViewProps> = ({
       setFollowingIds([]);
       return;
     }
-    console.log("Fetching following IDs for user:", user.uid);
     const q = query(
       collection(db, 'follows'), 
       where('followerId', '==', user.uid),
       limit(100)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      console.log("Following IDs snapshot received, size:", snapshot.size);
       const ids = snapshot.docs.map(doc => doc.data().followingId);
       setFollowingIds(ids);
     }, (error) => {
       console.error("Following IDs query failed:", error);
       handleFirestoreError(error, OperationType.LIST, 'follows');
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // Fetch friend IDs
+  useEffect(() => {
+    if (!user?.uid) {
+      setFriendIds([]);
+      return;
+    }
+    const q = query(
+      collection(db, 'friendships'),
+      where('uids', 'array-contains', user.uid)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const ids = snapshot.docs.map(doc => {
+        const uids = doc.data().uids;
+        return uids.find((id: string) => id !== user.uid);
+      }).filter(Boolean);
+      setFriendIds(ids);
+    }, (error) => {
+      console.error("Friend IDs query failed:", error);
+      handleFirestoreError(error, OperationType.LIST, 'friendships');
     });
     return () => unsubscribe();
   }, [user]);
@@ -145,17 +168,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
   };
 
-  // Update user story with real data
-  useEffect(() => {
-    setStories(prev => prev.map(s => s.isUser ? { ...s, avatar: userData?.avatar, image: userData?.avatar } : s));
-  }, [userData]);
-
   // Expiration logic: Remove stories older than 24 hours
   useEffect(() => {
     const interval = setInterval(() => {
       const now = Date.now();
       const twentyFourHours = 24 * 60 * 60 * 1000;
-      setStories(prev => prev.filter(s => s.isUser || (now - (s as any).timestamp < twentyFourHours)));
+      setStories(prev => prev.filter(s => (now - (s as any).timestamp < twentyFourHours)));
     }, 60000); // Check every minute
     return () => clearInterval(interval);
   }, []);
@@ -183,6 +201,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
     };
   }, [activeStoryIndex]);
 
+  // Track story views
+  useEffect(() => {
+    if (activeStoryIndex !== null && user) {
+      const story = stories[activeStoryIndex];
+      if (story && story.userId !== user.uid) {
+        if (!story.views || !story.views.includes(user.uid)) {
+          const storyRef = doc(db, 'stories', story.id);
+          updateDoc(storyRef, {
+            views: arrayUnion(user.uid)
+          }).catch(err => console.error("Error updating views:", err));
+        }
+      }
+    }
+  }, [activeStoryIndex]);
+
   const handleNextStory = () => {
     if (activeStoryIndex !== null) {
       if (activeStoryIndex < stories.length - 1) {
@@ -200,25 +233,38 @@ export const HomeView: React.FC<HomeViewProps> = ({
   };
 
   const compressImage = (dataUrl: string, maxWidth = 800, quality = 0.7): Promise<string> => {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.src = dataUrl;
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let width = img.width;
-        let height = img.height;
+    return new Promise((resolve, reject) => {
+      try {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            let width = img.width;
+            let height = img.height;
 
-        if (width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
-        }
+            if (width > maxWidth) {
+              height *= maxWidth / width;
+              width = maxWidth;
+            }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', quality));
-      };
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) throw new Error("Could not get 2d context");
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/jpeg', quality));
+          } catch (e) {
+            reject(e);
+          }
+        };
+        img.onerror = (err) => {
+          console.error("Image compression failed", err);
+          reject(new Error("Image compression failed"));
+        };
+        img.src = dataUrl;
+      } catch (e) {
+        reject(e);
+      }
     });
   };
 
@@ -233,19 +279,28 @@ export const HomeView: React.FC<HomeViewProps> = ({
         const reader = new FileReader();
         reader.onloadend = async () => {
           try {
-            await addDoc(collection(db, 'stories'), {
+            const uploadPromise = addDoc(collection(db, 'stories'), {
               userId: user.uid,
               userName: `${userData.firstName} ${userData.lastName}`,
               userAvatar: userData.avatar || '',
               image: reader.result,
               music: selectedMusic,
               createdAt: serverTimestamp(),
-              type: 'video'
+              type: 'video',
+              views: []
             });
+
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error("Upload timed out")), 30000)
+            );
+
+            await Promise.race([uploadPromise, timeoutPromise]);
+            
             setSelectedMusic(null);
             setShowMusicPicker(false);
           } catch (error) {
             console.error("Error adding story:", error);
+            alert("Failed to upload video story. Please try again.");
           } finally {
             setUploadingStory(false);
           }
@@ -265,19 +320,30 @@ export const HomeView: React.FC<HomeViewProps> = ({
     
     try {
       const compressedImage = await compressImage(imageDataUrl);
-      await addDoc(collection(db, 'stories'), {
+      
+      // Add a timeout to addDoc to prevent infinite spinning
+      const uploadPromise = addDoc(collection(db, 'stories'), {
         userId: user.uid,
         userName: `${userData.firstName} ${userData.lastName}`,
         userAvatar: userData.avatar || '',
         image: compressedImage,
         music: selectedMusic,
         createdAt: serverTimestamp(),
-        type: 'image'
+        type: 'image',
+        views: []
       });
+
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Upload timed out")), 15000)
+      );
+
+      await Promise.race([uploadPromise, timeoutPromise]);
+      
       setSelectedMusic(null);
       setShowMusicPicker(false);
     } catch (error) {
       console.error("Error adding story:", error);
+      alert("Failed to upload story. Please try again.");
     } finally {
       setUploadingStory(false);
     }
@@ -285,9 +351,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   const activeStory = activeStoryIndex !== null ? stories[activeStoryIndex] : null;
 
+  const privacyFilteredPosts = posts.filter(post => {
+    if (post.userId === user?.uid) return true; // Owner can see all
+    if (post.privacy === 'public') return true;
+    if (post.privacy === 'friends') return friendIds.includes(post.userId);
+    return false; // Private posts are hidden (unless owner)
+  });
+
   const filteredPosts = feedTab === 'for-you' 
-    ? posts 
-    : posts.filter(post => followingIds.includes(post.userId) || post.userId === user?.uid);
+    ? privacyFilteredPosts
+    : privacyFilteredPosts.filter(post => followingIds.includes(post.userId) || post.userId === user?.uid);
 
   return (
     <div 
@@ -343,29 +416,55 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Stories Section Redesign */}
       <section className="bg-zinc-50 pt-6 pb-6 px-6 overflow-x-auto no-scrollbar shadow-sm">
         <div className="flex gap-6">
-          <div className="flex flex-col items-center gap-2 min-w-[64px] relative group cursor-pointer" onClick={() => storyInputRef.current?.click()}>
-            <div className="w-16 h-16 rounded-[1.2rem] p-0.5 border-[3px] border-dashed border-primary/40 group-hover:border-primary transition-all duration-300 flex items-center justify-center bg-zinc-100 relative">
-              <div className="w-full h-full rounded-xl overflow-hidden relative bg-zinc-200">
-                {userData?.avatar ? (
-                  <img src={userData.avatar} alt="Your Story" className="w-full h-full object-cover opacity-80" referrerPolicy="no-referrer" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center">
-                    <User className="w-8 h-8 text-zinc-400" />
+          {(() => {
+            const userStoryIndex = stories.findIndex(s => s.userId === user?.uid);
+            const hasUserStory = userStoryIndex !== -1;
+            const userStory = hasUserStory ? stories[userStoryIndex] : null;
+
+            return (
+              <div 
+                className="flex flex-col items-center gap-2 min-w-[64px] relative group cursor-pointer" 
+                onClick={() => {
+                  if (hasUserStory) {
+                    setActiveStoryIndex(userStoryIndex);
+                  } else {
+                    storyInputRef.current?.click();
+                  }
+                }}
+              >
+                <div className={cn(
+                  "w-16 h-16 rounded-[1.2rem] p-0.5 transition-all duration-300 flex items-center justify-center bg-zinc-100 relative",
+                  hasUserStory 
+                    ? "bg-zinc-200"
+                    : "border-[3px] border-dashed border-primary/40 group-hover:border-primary"
+                )}>
+                  <div className="w-full h-full rounded-xl overflow-hidden relative bg-zinc-200 border-2 border-zinc-50">
+                    {userData?.avatar ? (
+                      <img src={userData.avatar} alt="Your Story" className="w-full h-full object-cover opacity-80" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <User className="w-8 h-8 text-zinc-400" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/10 group-hover:bg-black/0 transition-colors" />
                   </div>
-                )}
-                <div className="absolute inset-0 bg-black/10 group-hover:bg-black/0 transition-colors" />
-              </div>
-              <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-primary rounded-full flex items-center justify-center border-2 border-zinc-50 shadow-md transform transition-transform group-hover:scale-110">
-                <Plus className="w-4 h-4 text-white" strokeWidth={3} />
-              </div>
-              {uploadingStory && (
-                <div className="absolute inset-0 bg-white/60 rounded-[1.2rem] flex items-center justify-center backdrop-blur-sm z-20">
-                  <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                  
+                  {!hasUserStory && (
+                    <div className="absolute -bottom-2 -right-2 w-7 h-7 bg-primary rounded-full flex items-center justify-center border-2 border-zinc-50 shadow-md transform transition-transform group-hover:scale-110">
+                      <Plus className="w-4 h-4 text-white" strokeWidth={3} />
+                    </div>
+                  )}
+                  
+                  {uploadingStory && (
+                    <div className="absolute inset-0 bg-white/60 rounded-[1.2rem] flex items-center justify-center backdrop-blur-sm z-20">
+                      <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
-            <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">YOU</span>
-          </div>
+                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1">YOU</span>
+              </div>
+            );
+          })()}
 
           {loadingStories ? (
             Array(4).fill(0).map((_, i) => (
@@ -375,31 +474,35 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
             ))
           ) : (
-            stories.filter(s => !s.isUser).map((story, index) => (
-              <div 
-                key={story.id} 
-                className="flex flex-col items-center gap-2 min-w-[64px] cursor-pointer group"
-                onClick={() => setActiveStoryIndex(index)}
-              >
-                <div className={cn(
-                  "w-16 h-16 rounded-[1.2rem] p-0.5 relative transition-transform duration-300 group-hover:scale-105 active:scale-95 shadow-md",
-                  story.viewed ? "bg-zinc-200 shadow-zinc-200/50" : "bg-primary shadow-primary/20"
-                )}>
-                  <div className="w-full h-full rounded-[1rem] border-2 border-zinc-50 overflow-hidden bg-zinc-100">
-                    {story.userAvatar ? (
-                      <img src={story.userAvatar} alt={story.userName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <User className="w-8 h-8 text-zinc-400" />
-                      </div>
-                    )}
+            stories.map((story, index) => {
+              if (story.userId === user?.uid) return null;
+              const hasViewed = story.views?.includes(user?.uid || '');
+              return (
+                <div 
+                  key={story.id} 
+                  className="flex flex-col items-center gap-2 min-w-[64px] cursor-pointer group"
+                  onClick={() => setActiveStoryIndex(index)}
+                >
+                  <div className={cn(
+                    "w-16 h-16 rounded-[1.2rem] p-0.5 relative transition-transform duration-300 group-hover:scale-105 active:scale-95 shadow-md",
+                    hasViewed ? "bg-zinc-200 shadow-zinc-200/50" : "bg-primary shadow-primary/20"
+                  )}>
+                    <div className="w-full h-full rounded-[1rem] border-2 border-zinc-50 overflow-hidden bg-zinc-100">
+                      {story.userAvatar ? (
+                        <img src={story.userAvatar} alt={story.userName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <User className="w-8 h-8 text-zinc-400" />
+                        </div>
+                      )}
+                    </div>
                   </div>
+                  <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 truncate w-16 text-center">
+                    {story.userName.split(' ')[0]}
+                  </span>
                 </div>
-                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest mt-1 truncate w-16 text-center">
-                  {story.userName.split(' ')[0]}
-                </span>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </section>
@@ -555,6 +658,12 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
+                  {activeStory.userId === user?.uid && (
+                    <div className="flex items-center gap-2 bg-white/10 backdrop-blur-xl px-4 py-2 rounded-2xl text-white text-xs font-black border border-white/10">
+                      <Eye className="w-4 h-4 text-white/70" />
+                      <span>{activeStory.views?.length || 0}</span>
+                    </div>
+                  )}
                   {activeStory.music && (
                     <div className="flex items-center gap-2 bg-white/10 backdrop-blur-xl px-4 py-2 rounded-2xl text-white text-xs font-black border border-white/10">
                       <Music className="w-3 h-3 text-primary animate-pulse" />

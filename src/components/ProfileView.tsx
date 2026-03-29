@@ -1215,7 +1215,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <div>
                     <p className="text-sm font-medium text-zinc-900">Joined</p>
                     <p className="text-sm text-zinc-600 mt-1">
-                      {displayData?.createdAt ? new Date(displayData.createdAt.seconds * 1000).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Recently'}
+                      {displayData?.createdAt ? (displayData.createdAt.toDate ? displayData.createdAt.toDate().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : new Date(displayData.createdAt.seconds * 1000).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })) : 'Recently'}
                     </p>
                   </div>
                 </div>
