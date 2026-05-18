@@ -127,6 +127,7 @@ export const OnboardingView: React.FC<{ onComplete: () => void }> = ({ onComplet
             bio: formData.bio,
             avatar: formData.avatar,
             cover: formData.cover,
+            friendsCount: 0,
             onboardingCompleted: true,
             updatedAt: new Date().toISOString()
           }, { merge: true });

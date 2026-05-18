@@ -1,15 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
   UserPlus, 
-  UserCheck, 
   X, 
-  Search, 
+  Search as SearchIcon, 
   MoreHorizontal, 
   User, 
   Loader2,
   Check,
-  Clock,
-  MessageCircle
+  MessageCircle,
+  Play
 } from 'lucide-react';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { 
@@ -20,17 +19,27 @@ import {
   onSnapshot, 
   doc, 
   updateDoc, 
-  arrayUnion, 
-  arrayRemove, 
   getDocs, 
   where,
   addDoc,
   deleteDoc,
   serverTimestamp,
-  setDoc
+  setDoc,
+  increment,
+  writeBatch
 } from 'firebase/firestore';
 import { useUser } from '../contexts/UserContext';
+import { LazyImage } from './LazyImage';
 import { cn } from '../lib/utils';
+
+interface FriendRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  status: string;
+  createdAt: any;
+  fromUserData?: any;
+}
 
 interface FriendsViewProps {
   onViewProfile: (userId: string) => void;
@@ -39,130 +48,156 @@ interface FriendsViewProps {
 
 export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenChat }) => {
   const { user, userData } = useUser();
-  const [activeTab, setActiveTab] = useState<'suggestions' | 'friends'>('suggestions');
-  const [newUsers, setNewUsers] = useState<any[]>([]);
-  const [friends, setFriends] = useState<any[]>([]);
+  const [explorePosts, setExplorePosts] = useState<any[]>([]);
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [incomingRequests, setIncomingRequests] = useState<FriendRequest[]>([]);
   const [loading, setLoading] = useState(true);
-  const [incomingRequests, setIncomingRequests] = useState<any[]>([]);
-  const [sentRequestIds, setSentRequestIds] = useState<string[]>([]);
-  const [friendIds, setFriendIds] = useState<string[]>([]);
-  const [requestingIds, setRequestingIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+
+  const [requestedUsers, setRequestedUsers] = useState<Set<string>>(new Set());
+  const [followingUsers, setFollowingUsers] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!user) return;
 
-    // Fetch new users (excluding current user)
-    const usersQuery = query(
-      collection(db, 'users'),
-      orderBy('createdAt', 'desc'),
-      limit(50)
+    // Fetch user's following list to show "Following" instead of "Follow"
+    const unsubFollowing = onSnapshot(
+      query(collection(db, 'follows'), where('followerId', '==', user.uid)), 
+      (snap) => {
+        const ids = new Set(snap.docs.map(d => d.data().followingId));
+        setFollowingUsers(ids);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'follows')
     );
 
-    const unsubscribeUsers = onSnapshot(usersQuery, (snapshot) => {
-      const usersData = snapshot.docs
-        .map(doc => ({ 
-          id: doc.id, 
-          ...doc.data(),
-          mutual: Math.floor(Math.random() * 20)
-        }))
-        .filter(u => u.id !== user.uid);
-      setNewUsers(usersData);
-      setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'users');
-      setLoading(false);
-    });
+    // Fetch user's pending friend requests sent to show "Requested"
+    const unsubSentRequests = onSnapshot(
+      query(collection(db, 'friendRequests'), where('fromUserId', '==', user.uid), where('status', '==', 'pending')), 
+      (snap) => {
+        const ids = new Set(snap.docs.map(d => d.data().toUserId));
+        setRequestedUsers(ids);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'friendRequests')
+    );
 
-    // Fetch incoming friend requests
-    const incomingQuery = query(
+    // Fetch Explore content (recent posts)
+    const qPosts = query(collection(db, 'posts'), orderBy('createdAt', 'desc'), limit(24));
+    const unsubPosts = onSnapshot(
+      qPosts, 
+      (snap) => {
+        setExplorePosts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'posts')
+    );
+
+    // Fetch Suggestions
+    const qUsers = query(collection(db, 'users'), limit(15));
+    const unsubUsers = onSnapshot(
+      qUsers, 
+      (snap) => {
+        const users = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
+        setSuggestions(users.filter(u => u.uid !== user?.uid).slice(0, 5));
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'users')
+    );
+
+    // Fetch Incoming Friend Requests
+    const qRequests = query(
       collection(db, 'friendRequests'),
-      where('toUserId', '==', user.uid)
+      where('toUserId', '==', user.uid),
+      where('status', '==', 'pending')
     );
 
-    const unsubscribeIncoming = onSnapshot(incomingQuery, async (snapshot) => {
-      const requests = [];
-      for (const requestDoc of snapshot.docs) {
-        const data = requestDoc.data();
-        try {
-          const fromUserDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', data.fromUserId), limit(1)));
-          const fromUserData = fromUserDoc.docs[0]?.data();
-          requests.push({
-            id: requestDoc.id,
-            ...data,
-            fromUser: fromUserData
-          });
-        } catch (error) {
-          handleFirestoreError(error, OperationType.LIST, 'users');
-        }
-      }
-      setIncomingRequests(requests);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'friendRequests');
-    });
+    const unsubRequests = onSnapshot(
+      qRequests, 
+      async (snap) => {
+        const requests = snap.docs.map(d => ({ id: d.id, ...d.data() } as FriendRequest));
+        
+        // Fetch user data for each request (Simplified, in real apps use a shared cache)
+        const requestsWithData = await Promise.all(requests.map(async (req) => {
+          const uDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', req.fromUserId), limit(1)));
+          const uData = uDoc.docs[0]?.data();
+          return { ...req, fromUserData: uData };
+        }));
 
-    // Fetch sent friend requests
-    const sentQuery = query(
-      collection(db, 'friendRequests'),
-      where('fromUserId', '==', user.uid)
+        setIncomingRequests(requestsWithData);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, 'friendRequests')
     );
-
-    const unsubscribeSent = onSnapshot(sentQuery, (snapshot) => {
-      const ids = snapshot.docs.map(doc => doc.data().toUserId);
-      setSentRequestIds(ids);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'friendRequests');
-    });
-
-    // Fetch friendships and friend data
-    const friendshipsQuery = query(
-      collection(db, 'friendships'),
-      where('uids', 'array-contains', user.uid)
-    );
-
-    const unsubscribeFriendships = onSnapshot(friendshipsQuery, async (snapshot) => {
-      const ids = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return data.uids.find((id: string) => id !== user.uid);
-      });
-      setFriendIds(ids);
-
-      // Fetch friend details
-      const friendDetails = [];
-      for (const friendId of ids) {
-        try {
-          const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
-          if (!friendDoc.empty) {
-            friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.LIST, 'users');
-        }
-      }
-      setFriends(friendDetails);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'friendships');
-    });
 
     return () => {
-      unsubscribeUsers();
-      unsubscribeIncoming();
-      unsubscribeSent();
-      unsubscribeFriendships();
+      unsubPosts();
+      unsubUsers();
+      unsubRequests();
+      unsubFollowing();
+      unsubSentRequests();
     };
   }, [user]);
 
-  const handleMessage = (friendId: string) => {
-    if (!user || !onOpenChat) return;
-    const chatId = [user.uid, friendId].sort().join('_');
-    onOpenChat(chatId);
+  useEffect(() => {
+    if (searchQuery.trim().length > 0) {
+      setIsSearching(true);
+      const q = query(
+        collection(db, 'users'),
+        where('firstName', '>=', searchQuery),
+        where('firstName', '<=', searchQuery + '\uf8ff'),
+        limit(10)
+      );
+      getDocs(q).then(snap => {
+        setSearchResults(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        setIsSearching(false);
+      });
+    } else {
+      setSearchResults([]);
+    }
+  }, [searchQuery]);
+
+  const handleFollow = async (targetUserId: string) => {
+    if (!user || !userData) return;
+    const followId = `${user.uid}_${targetUserId}`;
+    const isAlreadyFollowing = followingUsers.has(targetUserId);
+    
+    try {
+      const batch = writeBatch(db);
+      if (isAlreadyFollowing) {
+        batch.delete(doc(db, 'follows', followId));
+        batch.update(doc(db, 'users', user.uid), { following: increment(-1) });
+        batch.update(doc(db, 'users', targetUserId), { followers: increment(-1) });
+      } else {
+        batch.set(doc(db, 'follows', followId), { 
+          followerId: user.uid, 
+          followingId: targetUserId, 
+          createdAt: serverTimestamp() 
+        });
+        batch.update(doc(db, 'users', user.uid), { following: increment(1) });
+        batch.update(doc(db, 'users', targetUserId), { followers: increment(1) });
+        
+        // Add notification
+        const notifRef = doc(collection(db, 'notifications'));
+        batch.set(notifRef, {
+          toUserId: targetUserId,
+          fromUserId: user.uid,
+          fromUserName: `${userData.firstName} ${userData.lastName}`,
+          fromUserAvatar: userData.avatar || '',
+          type: 'follow',
+          text: 'started following you',
+          read: false,
+          createdAt: serverTimestamp()
+        });
+      }
+      await batch.commit();
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleAddFriend = async (targetUserId: string) => {
     if (!user || !userData) return;
-    
-    setRequestingIds(prev => [...prev, targetUserId]);
-    
+    if (requestedUsers.has(targetUserId)) return;
+
     try {
       await addDoc(collection(db, 'friendRequests'), {
         fromUserId: user.uid,
@@ -170,8 +205,6 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
         status: 'pending',
         createdAt: serverTimestamp()
       });
-
-      // Create notification
       await addDoc(collection(db, 'notifications'), {
         toUserId: targetUserId,
         fromUserId: user.uid,
@@ -182,41 +215,46 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
         read: false,
         createdAt: serverTimestamp()
       });
-
-    } catch (error) {
-      console.error("Error adding friend:", error);
-    } finally {
-      setRequestingIds(prev => prev.filter(id => id !== targetUserId));
+    } catch (e) {
+      console.error(e);
     }
   };
 
-  const handleAcceptRequest = async (request: any) => {
+  const handleAcceptRequest = async (request: FriendRequest) => {
     if (!user) return;
     
+    const batch = writeBatch(db);
+    const friendshipId = [user.uid, request.fromUserId].sort().join('_');
+    const chatId = friendshipId; // One-to-one chat ID
+
     try {
-      // 1. Delete request
-      await deleteDoc(doc(db, 'friendRequests', request.id));
-      
-      // 2. Create friendship
-      const friendshipId = [user.uid, request.fromUserId].sort().join('_');
-      await setDoc(doc(db, 'friendships', friendshipId), {
+      // 1. Create Friendship
+      batch.set(doc(db, 'friendships', friendshipId), {
         uids: [user.uid, request.fromUserId],
         createdAt: serverTimestamp()
       });
 
-      // 3. Create chat
-      await setDoc(doc(db, 'chats', friendshipId), {
+      // 2. Create/Initialize Chat
+      batch.set(doc(db, 'chats', chatId), {
         participants: [user.uid, request.fromUserId],
-        lastMessage: 'You are now friends! Say hi.',
+        lastMessage: 'You are now friends!',
         lastMessageAt: serverTimestamp(),
         unreadCount: {
           [user.uid]: 0,
           [request.fromUserId]: 0
         }
-      });
+      }, { merge: true });
 
-      // 4. Create notification
-      await addDoc(collection(db, 'notifications'), {
+      // 3. Delete Request
+      batch.delete(doc(db, 'friendRequests', request.id));
+
+      // 4. Update user friend counts
+      batch.update(doc(db, 'users', user.uid), { friendsCount: increment(1) });
+      batch.update(doc(db, 'users', request.fromUserId), { friendsCount: increment(1) });
+
+      // 5. Add notification for acceptance
+      const notifRef = doc(collection(db, 'notifications'));
+      batch.set(notifRef, {
         toUserId: request.fromUserId,
         fromUserId: user.uid,
         fromUserName: `${userData?.firstName} ${userData?.lastName}`,
@@ -227,320 +265,195 @@ export const FriendsView: React.FC<FriendsViewProps> = ({ onViewProfile, onOpenC
         createdAt: serverTimestamp()
       });
 
-    } catch (error) {
-      console.error("Error accepting request:", error);
+      await batch.commit();
+    } catch (e) {
+      console.error("Accept failed:", e);
     }
   };
 
   const handleDeclineRequest = async (requestId: string) => {
     try {
       await deleteDoc(doc(db, 'friendRequests', requestId));
-    } catch (error) {
-      console.error("Error declining request:", error);
+    } catch (e) {
+      console.error("Decline failed:", e);
     }
   };
 
   return (
-    <div className="flex flex-col gap-4 bg-zinc-50 min-h-full pb-20">
-      {/* Header */}
-      <div className="bg-white px-6 py-6 border-b border-zinc-100 shadow-sm">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="text-2xl font-black text-zinc-900 tracking-tighter">Friends</h2>
-          <div className="w-10 h-10 bg-zinc-100 rounded-2xl flex items-center justify-center hover:bg-zinc-200 transition-all cursor-pointer">
-            <MoreHorizontal className="w-5 h-5 text-zinc-600" />
-          </div>
-        </div>
-
-        {/* Search Input */}
-        <div className="relative mb-6">
-          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-            <Search className="w-4 h-4 text-zinc-400" />
-          </div>
-          <input
-            type="text"
-            placeholder="Search friends by name..."
-            className="w-full bg-zinc-100 border-none rounded-2xl py-3.5 pl-11 pr-4 text-sm font-bold text-zinc-900 placeholder:text-zinc-400 focus:ring-2 focus:ring-primary/20 transition-all"
+    <div className="flex flex-col bg-black min-h-full">
+      {/* Search Header */}
+      <div className="px-4 py-3 sticky top-0 z-50 bg-black">
+        <div className="relative">
+          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <input 
+            type="text" 
+            placeholder="Search"
+            className="w-full bg-zinc-900 border-none rounded-xl py-2 pl-10 pr-4 text-sm text-white placeholder:text-zinc-500 focus:ring-1 focus:ring-zinc-700"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
-        </div>
-        
-        <div className="flex gap-3">
-          <button 
-            onClick={() => setActiveTab('suggestions')}
-            className={cn(
-              "px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95",
-              activeTab === 'suggestions' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
-            )}
-          >
-            Suggestions
-          </button>
-          <button 
-            onClick={() => setActiveTab('friends')}
-            className={cn(
-              "px-6 py-2.5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all active:scale-95",
-              activeTab === 'friends' ? "bg-primary text-white shadow-lg shadow-primary/20" : "bg-zinc-100 text-zinc-900 hover:bg-zinc-200"
-            )}
-          >
-            Your Friends
-          </button>
+          {searchQuery && (
+            <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2">
+              <X className="w-4 h-4 text-zinc-500" />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="px-4 space-y-6">
-        {activeTab === 'suggestions' ? (
-          <>
-            {/* Friend Requests Section */}
-        <div className="space-y-4">
-          <div className="flex justify-between items-center px-2">
-            <h3 className="text-lg font-black text-zinc-900 tracking-tight">Friend Requests</h3>
-            <span className="bg-primary/10 text-primary px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-              {incomingRequests.length} Pending
-            </span>
-          </div>
-          
-          {incomingRequests.length === 0 ? (
-            <div className="bg-white rounded-[2.5rem] p-6 shadow-sm border border-zinc-100 flex flex-col items-center justify-center text-center gap-4">
-              <div className="w-16 h-16 bg-zinc-50 rounded-3xl flex items-center justify-center shadow-inner">
-                <UserPlus className="w-8 h-8 text-zinc-200" />
+      {searchQuery.trim().length > 0 ? (
+        <div className="flex-1 px-4 space-y-4 pt-2">
+          {/* ... Search results stays same ... */}
+          {isSearching ? (
+            <div className="flex justify-center pt-8">
+              <Loader2 className="w-6 h-6 text-zinc-700 animate-spin" />
+            </div>
+          ) : searchResults.length > 0 ? (
+            searchResults.map(u => (
+              <div key={u.id} className="flex items-center justify-between group">
+                <div className="flex items-center gap-3 cursor-pointer" onClick={() => onViewProfile(u.uid)}>
+                  <img src={u.avatar} className="w-12 h-12 rounded-full object-cover" />
+                  <div>
+                    <p className="text-sm font-bold text-white">{u.firstName} {u.lastName}</p>
+                    <p className="text-xs text-zinc-500">{u.category || 'User'}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleFollow(u.uid);
+                    }}
+                    className={cn(
+                      "px-4 py-1.5 rounded-lg text-xs font-bold active:scale-95 transition-all w-24",
+                      followingUsers.has(u.uid) ? "bg-zinc-800 text-white" : "bg-blue-500 text-white"
+                    )}
+                  >
+                    {followingUsers.has(u.uid) ? 'Following' : 'Follow'}
+                  </button>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleAddFriend(u.uid);
+                    }}
+                    className={cn(
+                      "px-4 py-1.5 rounded-lg text-xs font-bold active:scale-95 transition-all w-24",
+                      requestedUsers.has(u.uid) ? "bg-zinc-800 text-zinc-500" : "bg-zinc-900 text-white"
+                    )}
+                    disabled={requestedUsers.has(u.uid)}
+                  >
+                    {requestedUsers.has(u.uid) ? 'Requested' : 'Add Friend'}
+                  </button>
+                </div>
               </div>
-              <div>
-                <p className="text-zinc-900 font-black">No new requests</p>
-                <p className="text-zinc-400 text-xs font-medium mt-1">When you have friend requests, they'll appear here.</p>
+            ))
+          ) : (
+            <p className="text-center text-zinc-500 pt-8">No results found for "{searchQuery}"</p>
+          )}
+        </div>
+      ) : (
+        <div className="flex-1 flex flex-col">
+          {/* Friend Requests Section */}
+          {incomingRequests.length > 0 && (
+            <div className="px-4 py-4 border-b border-zinc-900">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-sm font-bold text-white">Friend Requests</h3>
+              </div>
+              <div className="space-y-4">
+                {incomingRequests.map(req => (
+                  <div key={req.id} className="flex items-center justify-between">
+                    <div className="flex items-center gap-3 cursor-pointer" onClick={() => onViewProfile(req.fromUserId)}>
+                      <img src={req.fromUserData?.avatar} className="w-11 h-11 rounded-full object-cover" />
+                      <div>
+                        <p className="text-xs font-bold text-white">{req.fromUserData?.firstName} {req.fromUserData?.lastName}</p>
+                        <p className="text-[10px] text-zinc-500">Sent you a friend request</p>
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={() => handleAcceptRequest(req)}
+                        className="bg-blue-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold active:scale-95 transition-transform"
+                      >
+                        Accept
+                      </button>
+                      <button 
+                        onClick={() => handleDeclineRequest(req.id)}
+                        className="bg-zinc-800 text-white px-4 py-1.5 rounded-lg text-xs font-bold active:scale-95 transition-transform"
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {incomingRequests.map((req) => (
-                <div key={req.id} className="bg-white p-4 rounded-[2rem] shadow-sm border border-zinc-100 flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-2xl overflow-hidden bg-zinc-100 shrink-0">
-                    {req.fromUser?.avatar ? (
-                      <img src={req.fromUser.avatar} alt="User" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <User className="w-6 h-6 text-zinc-300" />
-                      </div>
-                    )}
+          )}
+
+          {/* Explore Grid */}
+          <div className="grid grid-cols-3 gap-0.5">
+            {explorePosts.map((post, idx) => (
+              <div 
+                key={post.id} 
+                className={cn(
+                  "relative aspect-square bg-zinc-900 group cursor-pointer",
+                  idx % 10 === 0 && "col-span-2 row-span-2 aspect-auto"
+                )}
+              >
+                {post.image ? (
+                  <img src={post.image} className="w-full h-full object-cover" alt="" />
+                ) : (
+                  <div className="w-full h-full bg-zinc-800 flex items-center justify-center">
+                    <Play className="w-8 h-8 text-white/50" />
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <h4 className="font-black text-zinc-900 truncate">{req.fromUser?.firstName} {req.fromUser?.lastName}</h4>
-                    <p className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Sent a request</p>
+                )}
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+              </div>
+            ))}
+          </div>
+
+          {/* Suggestions */}
+          <div className="px-4 py-8">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-sm font-bold text-white">Suggested for you</h3>
+              <button className="text-blue-500 text-xs font-bold">See All</button>
+            </div>
+            <div className="space-y-4">
+              {suggestions.map(u => (
+                <div key={u.id} className="flex items-center justify-between">
+                  {/* ... Suggestions content ... */}
+                  <div className="flex items-center gap-3 cursor-pointer" onClick={() => onViewProfile(u.uid)}>
+                    <img src={u.avatar} className="w-10 h-10 rounded-full object-cover" />
+                    <div>
+                      <p className="text-xs font-bold text-white">{u.firstName} {u.lastName}</p>
+                      <p className="text-[10px] text-zinc-500">Suggested for you</p>
+                    </div>
                   </div>
                   <div className="flex gap-2">
                     <button 
-                      onClick={() => handleAcceptRequest(req)}
-                      className="bg-primary text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/15 active:scale-95 transition-all"
+                      onClick={() => handleFollow(u.uid)}
+                      className={cn(
+                        "text-xs font-bold active:scale-95",
+                        followingUsers.has(u.uid) ? "text-zinc-500" : "text-blue-500"
+                      )}
                     >
-                      Confirm
+                      {followingUsers.has(u.uid) ? 'Following' : 'Follow'}
                     </button>
                     <button 
-                      onClick={() => handleDeclineRequest(req.id)}
-                      className="bg-zinc-100 text-zinc-500 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-200 active:scale-95 transition-all"
+                      onClick={() => handleAddFriend(u.uid)}
+                      className={cn(
+                        "text-xs font-bold active:scale-95 ml-2",
+                        requestedUsers.has(u.uid) ? "text-zinc-500" : "text-zinc-300"
+                      )}
+                      disabled={requestedUsers.has(u.uid)}
                     >
-                      Delete
+                      {requestedUsers.has(u.uid) ? 'Requested' : 'Add Friend'}
                     </button>
                   </div>
                 </div>
               ))}
             </div>
-          )}
-        </div>
-
-        {/* People You May Know (New Users) */}
-        <div className="space-y-4">
-          <div className="flex justify-between items-center px-2">
-            <h3 className="text-lg font-black text-zinc-900 tracking-tight">
-              {searchQuery ? 'Search Results' : 'New to Connectro'}
-            </h3>
-            <span className="bg-indigo-100 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-              {searchQuery ? 'Found users' : 'People you may know'}
-            </span>
           </div>
-
-          {loading ? (
-            <div className="py-12 flex flex-col items-center justify-center gap-4">
-              <Loader2 className="w-8 h-8 text-primary animate-spin" />
-              <span className="text-zinc-400 text-xs font-black uppercase tracking-widest">Finding new members</span>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {newUsers
-                .filter(u => 
-                  `${u.firstName} ${u.lastName}`.toLowerCase().includes(searchQuery.toLowerCase())
-                )
-                .map((u) => {
-                  const isFriend = friendIds.includes(u.id);
-                  const isSent = sentRequestIds.includes(u.id);
-                  const isRequesting = requestingIds.includes(u.id);
-
-                  return (
-                    <div 
-                      key={u.id}
-                      className="bg-white p-4 rounded-[2rem] shadow-sm border border-zinc-100 flex items-center gap-4 group hover:shadow-md transition-all"
-                    >
-                      <div 
-                        onClick={() => onViewProfile(u.id)}
-                        className="w-16 h-16 rounded-2xl overflow-hidden bg-zinc-100 flex-shrink-0 cursor-pointer border-2 border-white shadow-sm"
-                      >
-                        {u.avatar ? (
-                          <img src={u.avatar} alt={u.firstName} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <User className="w-8 h-8 text-zinc-300" />
-                          </div>
-                        )}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <h4 
-                          onClick={() => onViewProfile(u.id)}
-                          className="font-black text-zinc-900 truncate cursor-pointer hover:text-primary transition-colors"
-                        >
-                          {u.firstName} {u.lastName}
-                        </h4>
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-0.5">
-                          {u.category || 'New Member'}
-                        </p>
-                        {u.mutual > 0 && (
-                          <p className="text-[10px] font-bold text-zinc-400 mt-0.5">
-                            {u.mutual} mutual connections
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-2">
-                        {isFriend ? (
-                          <button 
-                            onClick={() => handleMessage(u.id)}
-                            className="bg-emerald-50 text-emerald-600 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 hover:bg-emerald-100 transition-all active:scale-95"
-                          >
-                            <MessageCircle className="w-3 h-3" /> Message
-                          </button>
-                        ) : isSent ? (
-                          <button className="bg-zinc-100 text-zinc-500 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 cursor-default">
-                            <Clock className="w-3 h-3" /> Sent
-                          </button>
-                        ) : (
-                          <button 
-                            onClick={() => handleAddFriend(u.id)}
-                            disabled={isRequesting}
-                            className={cn(
-                              "bg-primary text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-primary/15 flex items-center justify-center gap-2 min-w-[100px]",
-                              isRequesting ? "opacity-70 cursor-not-allowed" : "hover:bg-indigo-700"
-                            )}
-                          >
-                            {isRequesting ? (
-                              <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <UserPlus className="w-3 h-3" />
-                            )}
-                            {isRequesting ? 'Sending...' : 'Add Friend'}
-                          </button>
-                        )}
-                        <button className="bg-zinc-50 text-zinc-400 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-100 transition-all active:scale-95">
-                          Remove
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              
-              {newUsers.filter(u => 
-                `${u.firstName} ${u.lastName}`.toLowerCase().includes(searchQuery.toLowerCase())
-              ).length === 0 && (
-                <div className="py-12 text-center">
-                  <p className="text-zinc-400 font-bold">
-                    {searchQuery ? `No users found matching "${searchQuery}"` : 'No other members found yet.'}
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
         </div>
-        </>
-      ) : (
-        <div className="space-y-4">
-            <div className="flex justify-between items-center px-2">
-              <h3 className="text-lg font-black text-zinc-900 tracking-tight">Your Friends</h3>
-              <span className="bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest">
-                {friends.length} Total
-              </span>
-            </div>
-
-            {friends.length === 0 ? (
-              <div className="bg-white rounded-[2.5rem] p-12 shadow-sm border border-zinc-100 flex flex-col items-center justify-center text-center gap-4">
-                <div className="w-20 h-20 bg-zinc-50 rounded-[2rem] flex items-center justify-center shadow-inner">
-                  <User className="w-10 h-10 text-zinc-200" />
-                </div>
-                <div>
-                  <p className="text-zinc-900 font-black text-lg">No friends yet</p>
-                  <p className="text-zinc-400 text-sm font-medium mt-1">Start connecting with people to see them here!</p>
-                </div>
-                <button 
-                  onClick={() => setActiveTab('suggestions')}
-                  className="mt-4 bg-primary text-white px-8 py-3 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-primary/20 active:scale-95 transition-all"
-                >
-                  Find Friends
-                </button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3">
-                {friends
-                  .filter(f => 
-                    `${f.firstName} ${f.lastName}`.toLowerCase().includes(searchQuery.toLowerCase())
-                  )
-                  .map((f) => (
-                    <div 
-                      key={f.id}
-                      className="bg-white p-4 rounded-[2rem] shadow-sm border border-zinc-100 flex items-center gap-4 group hover:shadow-md transition-all"
-                    >
-                      <div 
-                        onClick={() => onViewProfile(f.id)}
-                        className="w-16 h-16 rounded-2xl overflow-hidden bg-zinc-100 flex-shrink-0 cursor-pointer border-2 border-white shadow-sm"
-                      >
-                        {f.avatar ? (
-                          <img src={f.avatar} alt={f.firstName} className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center">
-                            <User className="w-8 h-8 text-zinc-300" />
-                          </div>
-                        )}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <h4 
-                          onClick={() => onViewProfile(f.id)}
-                          className="font-black text-zinc-900 truncate cursor-pointer hover:text-primary transition-colors"
-                        >
-                          {f.firstName} {f.lastName}
-                        </h4>
-                        <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest mt-0.5">
-                          {f.category || 'Friend'}
-                        </p>
-                      </div>
-
-                      <div className="flex gap-2">
-                        <button 
-                          onClick={() => handleMessage(f.id)}
-                          className="bg-primary text-white px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-primary/15 active:scale-95 transition-all flex items-center gap-2"
-                        >
-                          <MessageCircle className="w-3 h-3" /> Message
-                        </button>
-                        <button 
-                          onClick={() => onViewProfile(f.id)}
-                          className="bg-zinc-100 text-zinc-600 px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-200 active:scale-95 transition-all"
-                        >
-                          Profile
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 };

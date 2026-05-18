@@ -1,37 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Search, 
-  MoreHorizontal, 
   User, 
-  Bell, 
-  Heart, 
-  MessageCircle, 
-  Share2, 
-  AlertCircle,
   Settings,
   Edit3,
-  Camera,
   ChevronLeft,
-  Check,
   CheckCheck,
-  Plus
+  Plus,
+  Video,
+  Camera
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { LazyImage } from './LazyImage';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { 
   collection, 
   query, 
   where, 
   onSnapshot, 
   orderBy, 
-  Timestamp, 
-  deleteDoc, 
-  doc, 
   getDocs,
   limit
 } from 'firebase/firestore';
 import { ChatWindow } from './ChatWindow';
+import { motion } from 'motion/react';
 
 interface Chat {
   id: string;
@@ -46,43 +39,25 @@ interface MessagesViewProps {
   onViewProfile: (userId: string) => void;
   selectedChatId: string | null;
   setSelectedChatId: (chatId: string | null) => void;
+  onBack?: () => void;
 }
 
-const TimeAgo: React.FC<{ timestamp: any }> = ({ timestamp }) => {
-  const [timeAgo, setTimeAgo] = useState('');
-
-  useEffect(() => {
-    const updateTime = () => {
-      if (!timestamp) {
-        setTimeAgo('');
-        return;
-      }
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      const now = new Date();
-      const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
-      
-      if (diffInSeconds < 60) {
-        setTimeAgo(`${diffInSeconds}s`);
-      } else if (diffInSeconds < 3600) {
-        setTimeAgo(`${Math.floor(diffInSeconds / 60)}m`);
-      } else if (diffInSeconds < 86400) {
-        setTimeAgo(`${Math.floor(diffInSeconds / 3600)}h`);
-      } else if (diffInSeconds < 604800) {
-        setTimeAgo(`${Math.floor(diffInSeconds / 86400)}d`);
-      } else {
-        setTimeAgo(date.toLocaleDateString());
-      }
-    };
-
-    updateTime();
-    const interval = setInterval(updateTime, 10000);
-    return () => clearInterval(interval);
-  }, [timestamp]);
-
-  return <span>{timeAgo}</span>;
+const formatTime = (ts: any) => {
+  if (!ts) return '';
+  const date = ts.toDate ? ts.toDate() : new Date(ts);
+  const diff = (Date.now() - date.getTime()) / 1000;
+  if (diff < 60) return 'now';
+  if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+  return date.toLocaleDateString();
 };
 
-export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selectedChatId, setSelectedChatId }) => {
+export const MessagesView: React.FC<MessagesViewProps> = ({ 
+  onViewProfile, 
+  selectedChatId, 
+  setSelectedChatId,
+  onBack
+}) => {
   const { user } = useUser();
   const [chats, setChats] = useState<Chat[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,76 +74,33 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
 
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       const chatsData: Chat[] = [];
-      
       for (const chatDoc of snapshot.docs) {
         const data = chatDoc.data() as Chat;
         const otherUserId = data.participants.find(id => id !== user.uid);
-        
         if (otherUserId) {
           try {
-            const userDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', otherUserId), limit(1)));
-            const otherUser = userDoc.docs[0]?.data();
-            chatsData.push({
-              ...data,
-              id: chatDoc.id,
-              otherUser
-            });
-          } catch (error) {
-            handleFirestoreError(error, OperationType.LIST, 'users');
+            const userSnap = await getDocs(query(collection(db, 'users'), where('uid', '==', otherUserId), limit(1)));
+            const otherUser = userSnap.docs[0]?.data();
+            chatsData.push({ ...data, id: chatDoc.id, otherUser });
+          } catch (e) { 
+            console.error(e); 
           }
         }
       }
-      
       setChats(chatsData);
       setLoading(false);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'chats');
-      setLoading(false);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'chats'));
 
     return () => unsubscribe();
   }, [user]);
 
-  // Fetch active users (friends)
+  // Active users / Notes shim
   useEffect(() => {
     if (!user) return;
-    
-    const friendshipsQuery = query(
-      collection(db, 'friendships'),
-      where('uids', 'array-contains', user.uid)
-    );
-
-    const unsubscribe = onSnapshot(friendshipsQuery, async (snapshot) => {
-      const ids = snapshot.docs.map(doc => {
-        const data = doc.data();
-        return data.uids.find((id: string) => id !== user.uid);
-      }).filter(Boolean);
-
-      if (ids.length === 0) {
-        setActiveUsers([]);
-        return;
-      }
-
-      // Fetch friend details
-      const friendDetails = [];
-      const idsToFetch = ids.slice(0, 10); // Limit to 10 for active users bar
-      
-      for (const friendId of idsToFetch) {
-        try {
-          const friendDoc = await getDocs(query(collection(db, 'users'), where('uid', '==', friendId), limit(1)));
-          if (!friendDoc.empty) {
-            friendDetails.push({ id: friendId, ...friendDoc.docs[0].data() });
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.LIST, 'users');
-        }
-      }
-      setActiveUsers(friendDetails);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, 'friendships');
+    const q = query(collection(db, 'users'), limit(10));
+    getDocs(q).then(snap => {
+      setActiveUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as any)).filter(u => u.uid !== user.uid));
     });
-    
-    return () => unsubscribe();
   }, [user]);
 
   if (selectedChatId) {
@@ -183,151 +115,116 @@ export const MessagesView: React.FC<MessagesViewProps> = ({ onViewProfile, selec
   }
 
   return (
-    <div className="bg-white min-h-full pb-24 flex flex-col">
+    <div className="bg-black min-h-screen flex flex-col text-white pb-20">
       {/* Header */}
-      <div className="px-6 py-4 flex justify-between items-center sticky top-0 bg-white/90 backdrop-blur-xl z-20">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-zinc-100">
-            {user?.photoURL ? (
-              <img src={user.photoURL} alt="Me" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                <User className="w-5 h-5 text-zinc-400" />
-              </div>
-            )}
-          </div>
-          <h2 className="text-2xl font-black text-zinc-900 tracking-tighter">Messages</h2>
-        </div>
+      <div className="px-4 py-4 flex justify-between items-center sticky top-0 bg-black z-30">
         <div className="flex items-center gap-2">
-          <button className="w-10 h-10 bg-zinc-50 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-all active:scale-90 relative">
-            <Settings className="w-5 h-5 text-zinc-900" />
-            <span className="absolute -top-1 -right-1 w-5 h-5 bg-primary text-white text-[10px] font-black flex items-center justify-center rounded-full border-2 border-white">7</span>
+          <button onClick={onBack} className="p-1">
+            <ChevronLeft className="w-7 h-7" />
           </button>
-          <button className="w-10 h-10 bg-zinc-50 rounded-full flex items-center justify-center hover:bg-zinc-100 transition-all active:scale-90">
-            <Search className="w-5 h-5 text-zinc-900" />
-          </button>
+          <div className="flex items-center gap-1">
+            <h2 className="text-xl font-bold">{user?.displayName || 'Messenger'}</h2>
+            <div className="bg-red-500 w-1.5 h-1.5 rounded-full mt-1" />
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <Video className="w-6 h-6" />
+          <Edit3 className="w-6 h-6" />
         </div>
       </div>
 
-      {/* Search Bar */}
-      <div className="px-6 py-2">
-        <div className="relative group">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400 group-focus-within:text-primary transition-colors" />
+      {/* Search */}
+      <div className="px-4 py-2">
+        <div className="relative bg-zinc-900 rounded-xl flex items-center px-4 py-2.5">
+          <Search className="w-4 h-4 text-zinc-500 mr-3" />
           <input 
             type="text" 
-            placeholder="Search messages..." 
-            className="w-full bg-zinc-50 border-none rounded-2xl py-3 pl-11 pr-4 text-sm font-bold focus:ring-2 focus:ring-primary/20 outline-none transition-all"
+            placeholder="Search" 
+            className="bg-transparent border-none p-0 text-sm w-full focus:ring-0 placeholder:text-zinc-500"
           />
         </div>
       </div>
 
-      {/* Active Users (Stories style) */}
-      <div className="mt-4">
-        <div className="flex overflow-x-auto no-scrollbar gap-4 px-6 pb-4">
-          <div className="flex flex-col items-center gap-2 shrink-0">
-            <div className="w-16 h-16 rounded-full bg-zinc-50 border-2 border-zinc-100 flex items-center justify-center relative cursor-pointer hover:bg-zinc-100 transition-all">
-              <Plus className="w-6 h-6 text-zinc-400" />
-              <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-white rounded-full flex items-center justify-center shadow-md">
-                <div className="w-4 h-4 bg-zinc-200 rounded-full"></div>
-              </div>
+      {/* Notes / Active Users */}
+      <div className="mt-6 flex overflow-x-auto px-4 gap-5 no-scrollbar pb-4">
+        <div className="flex flex-col items-center gap-2 shrink-0">
+          <div className="relative w-16 h-16">
+            <div className="w-full h-full rounded-full bg-zinc-900 flex items-center justify-center p-0.5">
+              <img src={user?.photoURL || ''} className="w-full h-full rounded-full object-cover" />
             </div>
-            <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Your note</span>
+            <div className="absolute -top-6 -right-2 bg-white text-black px-3 py-1.5 rounded-2xl rounded-bl-sm text-[10px] font-medium shadow-lg max-w-[80px] break-words">
+              Note...
+            </div>
+            <div className="absolute bottom-0 right-0 bg-zinc-800 rounded-full p-1 border-2 border-black">
+              <Plus className="w-3 h-3 text-white" />
+            </div>
           </div>
-          {activeUsers.map((u) => (
-            <div 
-              key={u.id} 
-              onClick={() => {
-                const chatId = [user?.uid, u.id].sort().join('_');
-                setSelectedChatId(chatId);
-              }}
-              className="flex flex-col items-center gap-2 shrink-0 cursor-pointer group"
-            >
-              <div className="w-16 h-16 rounded-full p-0.5 border-2 border-primary group-hover:scale-105 transition-transform">
-                <div className="w-full h-full rounded-full overflow-hidden border-2 border-white relative">
-                  {u.avatar ? (
-                    <img src={u.avatar} alt={u.firstName} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                      <User className="w-6 h-6 text-zinc-300" />
-                    </div>
-                  )}
-                  <div className="absolute bottom-1 right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
-                </div>
-              </div>
-              <span className="text-[10px] font-black text-zinc-900 uppercase tracking-widest truncate w-16 text-center">{u.firstName}</span>
-            </div>
-          ))}
+          <span className="text-[11px] text-zinc-500">Your note</span>
         </div>
+
+        {activeUsers.map(u => (
+          <div key={u.id} className="flex flex-col items-center gap-2 shrink-0 cursor-pointer" onClick={() => setSelectedChatId([user?.uid, u.uid].sort().join('_'))}>
+            <div className="relative w-16 h-16">
+               <img src={u.avatar} className="w-full h-full rounded-full object-cover" />
+               <div className="absolute bottom-1 right-1 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-black" />
+            </div>
+            <span className="text-[11px] text-zinc-500 truncate w-16 text-center">{u.firstName}</span>
+          </div>
+        ))}
       </div>
 
-      {/* Chat List */}
-      <div className="flex-1 px-6 py-4">
+      {/* Messages List */}
+      <div className="flex-1 px-4 mt-4 space-y-4">
+        <div className="flex justify-between items-center px-1">
+          <span className="text-sm font-bold">Messages</span>
+          <button className="text-blue-500 text-sm font-medium">Requests</button>
+        </div>
+
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Syncing messages...</p>
+          <div className="flex justify-center py-10">
+            <Loader2 className="w-6 h-6 animate-spin text-zinc-700" />
           </div>
         ) : chats.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-center px-10">
-            <div className="w-20 h-20 bg-zinc-50 rounded-[2.5rem] flex items-center justify-center mb-6 shadow-inner">
-              <MessageCircle className="w-8 h-8 text-zinc-200" />
-            </div>
-            <h3 className="text-xl font-black text-zinc-900 tracking-tighter mb-2">No conversations yet</h3>
-            <p className="text-zinc-400 text-xs font-bold uppercase tracking-widest leading-relaxed">
-              Start a conversation with your friends to see them here.
-            </p>
+          <div className="text-center py-10">
+            <p className="text-zinc-500">No messages yet</p>
           </div>
         ) : (
-          <div className="flex flex-col gap-2">
-            {chats.map(chat => (
+          chats.map(chat => {
+            const hasUnread = chat.unreadCount?.[user?.uid || ''] || 0 > 0;
+            return (
               <div 
                 key={chat.id} 
+                className="flex items-center gap-3 active:bg-zinc-900 p-1 rounded-lg transition-colors cursor-pointer"
                 onClick={() => setSelectedChatId(chat.id)}
-                className="flex gap-4 items-center p-3 rounded-[2rem] hover:bg-zinc-50 transition-all cursor-pointer group active:scale-[0.98]"
               >
                 <div className="relative shrink-0">
-                  <div className="w-14 h-14 rounded-full overflow-hidden border border-zinc-100 group-hover:scale-105 transition-transform">
-                    {chat.otherUser?.avatar ? (
-                      <img src={chat.otherUser.avatar} alt="User" className="w-full h-full object-cover" />
-                    ) : (
-                      <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                        <User className="w-7 h-7 text-zinc-300" />
-                      </div>
-                    )}
-                  </div>
-                  <div className="absolute bottom-0 right-0 w-4 h-4 bg-emerald-500 rounded-full border-2 border-white"></div>
+                  <img src={chat.otherUser?.avatar} className="w-14 h-14 rounded-full object-cover" />
+                  <div className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-black" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex justify-between items-center mb-0.5">
-                    <h4 className="font-black text-zinc-900 tracking-tight truncate">{chat.otherUser?.firstName} {chat.otherUser?.lastName}</h4>
-                    <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-                      <TimeAgo timestamp={chat.lastMessageAt} />
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <p className={cn(
-                      "text-sm truncate",
-                      chat.unreadCount?.[user?.uid || ''] ? "font-black text-zinc-900" : "text-zinc-500 font-medium"
-                    )}>
-                      {chat.lastMessage}
-                    </p>
-                    {chat.unreadCount?.[user?.uid || ''] ? (
-                      <div className="w-2 h-2 bg-primary rounded-full"></div>
-                    ) : (
-                      <CheckCheck className="w-3 h-3 text-zinc-300" />
-                    )}
-                  </div>
+                  <p className={cn("text-sm", hasUnread ? "font-bold text-white" : "text-zinc-300 font-medium")}>
+                    {chat.otherUser?.firstName} {chat.otherUser?.lastName}
+                  </p>
+                  <p className={cn("text-xs truncate max-w-[200px]", hasUnread ? "font-bold text-white" : "text-zinc-500")}>
+                    {chat.lastMessage} · {formatTime(chat.lastMessageAt)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  {hasUnread ? (
+                    <div className="w-2.5 h-2.5 bg-blue-500 rounded-full" />
+                  ) : (
+                    <Camera className="w-5 h-5 text-zinc-500" />
+                  )}
                 </div>
               </div>
-            ))}
-          </div>
+            );
+          })
         )}
       </div>
-
-      {/* Floating Action Button */}
-      <button className="fixed bottom-28 right-6 w-14 h-14 bg-primary text-white rounded-full flex items-center justify-center shadow-2xl shadow-primary/40 hover:scale-110 active:scale-95 transition-all z-30">
-        <Edit3 className="w-6 h-6" />
-      </button>
     </div>
   );
 };
+
+const Loader2 = ({ className }: { className?: string }) => (
+  <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+);

@@ -2,132 +2,171 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     // ===============================================================
-    // Helper Functions
+    // HELPERS
     // ===============================================================
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
     
+    function isEmailVerified() {
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'google.com');
+    }
+
     function isOwner(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
     
-    function isDocOwner() {
-      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
-    
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
     function isAdmin() {
-      return isAuthenticated() && 
-        (
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-          (request.auth.token.email == "rakibulhasantohin@gmail.com" && request.auth.token.email_verified == true) ||
-          (request.auth.token.email == "rakibulhasantuhin010@gmail.com")
-        );
+      return isSignedIn() && (
+        request.auth.token.email in ["rakibulhasantohin@gmail.com", "rakibulhasantuhin010@gmail.com"] ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
     }
-
-    function hasRequiredFields(fields) {
-      return request.resource.data.keys().hasAll(fields);
-    }
-
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
-
-    // ===============================================================
-    // Domain Validators
-    // ===============================================================
-    function isValidUser(data) {
-      return data.firstName is string && data.firstName.size() > 0 && data.firstName.size() < 50 &&
-             data.lastName is string && data.lastName.size() > 0 && data.lastName.size() < 50;
-    }
-
-    function isValidPost(data) {
-      return data.userId == request.auth.uid &&
-             data.content is string && data.content.size() <= 2000;
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
     
+    // Entity Validations
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 256;
+    }
+    
+    function isValidPost(data) {
+      return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.text is string && data.text.size() <= 5000;
+    }
+    
+    function isValidFriendship(data) {
+      return data.keys().hasAll(['uids', 'createdAt']) &&
+             data.uids is list && data.uids.size() == 2 &&
+             request.auth.uid in data.uids;
+    }
+
+    function isValidReaction(data) {
+      return data.keys().hasAll(['userId', 'type', 'createdAt']) &&
+             data.type in ['like', 'love', 'care', 'haha', 'wow', 'sad', 'angry'] &&
+             data.userId == request.auth.uid;
+    }
+
+    function isValidFriendRequest(data) {
+      return data.keys().hasAll(['fromUserId', 'toUserId', 'createdAt']) &&
+             data.fromUserId == request.auth.uid &&
+             data.toUserId is string && data.toUserId.size() <= 128;
+    }
+
+    function isValidFollow(data) {
+      return data.keys().hasAll(['followerId', 'followingId', 'createdAt']) &&
+             data.followerId == request.auth.uid &&
+             data.followingId is string && data.followingId.size() <= 128;
+    }
+
+    // ===============================================================
+    // DEFAULT DENY
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // COLLECTIONS
+    // ===============================================================
+
     match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming());
 
       match /savedPosts/{postId} {
-        allow get, list, write: if isOwner(userId);
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId) || isAdmin();
       }
     }
 
     match /posts/{postId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidPost(request.resource.data);
-      allow update: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-      allow delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(postId) && isValidPost(incoming());
+      allow update: if isEmailVerified() && (existing().userId == request.auth.uid || isAdmin());
+      allow delete: if isEmailVerified() && (existing().userId == request.auth.uid || isAdmin());
 
       match /reactions/{userId} {
-        allow read, write: if isAuthenticated();
+        allow read: if isSignedIn();
+        allow create, update: if isEmailVerified() && isValidId(userId) && userId == request.auth.uid && isValidReaction(incoming());
+        allow delete: if isEmailVerified() && isOwner(userId);
       }
     }
 
-    match /comments/{commentId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (resource.data.userId == request.auth.uid || isAdmin());
-    }
-
-    match /likes/{likeId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
-    }
-
-    match /follows/{followId} {
-      allow get: if isAuthenticated();
-      allow list: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.followerId == request.auth.uid;
-      allow delete: if isAuthenticated() && resource.data.followerId == request.auth.uid;
+    match /friendships/{friendshipId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && request.auth.uid in existing().uids;
+      allow create: if isEmailVerified() && isValidId(friendshipId) && isValidFriendship(incoming());
+      allow delete: if isEmailVerified() && (request.auth.uid in existing().uids || isAdmin());
     }
 
     match /friendRequests/{requestId} {
-      allow get, list: if isAuthenticated() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
-      allow create: if isAuthenticated() && request.resource.data.fromUserId == request.auth.uid;
-      allow update, delete: if isAuthenticated() && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
-    }
-
-    match /friendships/{friendshipId} {
-      allow get: if isAuthenticated() && request.auth.uid in resource.data.uids;
-      allow list: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.uids;
-      allow delete: if isAuthenticated() && request.auth.uid in resource.data.uids;
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && (existing().fromUserId == request.auth.uid || existing().toUserId == request.auth.uid);
+      allow create: if isEmailVerified() && isValidId(requestId) && isValidFriendRequest(incoming());
+      allow update, delete: if isEmailVerified() && (
+        existing().fromUserId == request.auth.uid || 
+        existing().toUserId == request.auth.uid || 
+        isAdmin()
+      );
     }
 
     match /chats/{chatId} {
-      allow read: if isAuthenticated() && request.auth.uid in resource.data.participants;
-      allow create: if isAuthenticated() && request.auth.uid in request.resource.data.participants;
-      allow update: if isAuthenticated() && request.auth.uid in resource.data.participants;
+      allow get: if isSignedIn() && (request.auth.uid in existing().participants || isAdmin());
+      allow list: if isSignedIn() && (request.auth.uid in existing().participants || isAdmin());
+      allow create: if isEmailVerified() && isValidId(chatId) && request.auth.uid in incoming().participants;
+      allow update: if isEmailVerified() && (request.auth.uid in existing().participants || isAdmin());
+      
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+        allow create: if isEmailVerified() && isValidId(messageId) && request.auth.uid == incoming().senderId;
+      }
     }
 
-    match /messages/{messageId} {
-      allow read: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(resource.data.chatId)).data.participants;
-      allow create: if isAuthenticated() && request.auth.uid in get(/databases/$(database)/documents/chats/$(request.resource.data.chatId)).data.participants;
+    match /follows/{followId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn(); // Allow listing follows so user can see who is followed by others
+      allow create: if isEmailVerified() && isValidId(followId) && isValidFollow(incoming());
+      allow delete: if isEmailVerified() && (existing().followerId == request.auth.uid || isAdmin());
     }
 
     match /notifications/{notificationId} {
-      allow get, list: if isAuthenticated() && resource.data.toUserId == request.auth.uid;
-      allow create: if isAuthenticated(); // Allow anyone to send notification to others
-      allow update, delete: if isAuthenticated() && resource.data.toUserId == request.auth.uid;
+      allow get: if isOwner(existing().toUserId) || isAdmin();
+      allow list: if isSignedIn() && (existing().toUserId == request.auth.uid || isAdmin());
+      allow create: if isEmailVerified() && isValidId(notificationId);
+      allow update, delete: if isEmailVerified() && (existing().toUserId == request.auth.uid || isAdmin());
     }
 
     match /stories/{storyId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
-      allow update: if isAuthenticated() && (
-        resource.data.userId == request.auth.uid || 
-        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['views']))
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(storyId) && incoming().userId == request.auth.uid;
+      allow update: if isEmailVerified() && (
+        existing().userId == request.auth.uid || 
+        isAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['views'])
       );
-      allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow delete: if isEmailVerified() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /comments/{commentId} {
+      allow read: if isSignedIn();
+      allow create: if isEmailVerified() && isValidId(commentId) && incoming().userId == request.auth.uid;
+      allow update, delete: if isEmailVerified() && (existing().userId == request.auth.uid || isAdmin());
     }
   }
 }

@@ -17,6 +17,7 @@ import { TabType } from '../data/dummy';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
 import { auth } from '../firebase';
+import { LazyImage } from './LazyImage';
 
 interface MenuViewProps {
   setTab: (t: TabType) => void;
@@ -43,15 +44,11 @@ export const MenuView: React.FC<MenuViewProps> = ({ setTab }) => {
       {/* Header */}
       <div className="bg-white px-4 py-3 flex justify-between items-center sticky top-0 z-10 shadow-sm">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full overflow-hidden border border-zinc-200">
-            {userData?.avatar ? (
-              <img src={userData.avatar} alt="Avatar" className="w-full h-full object-cover" />
-            ) : (
-              <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                <Users className="w-5 h-5 text-zinc-400" />
-              </div>
-            )}
-          </div>
+          <LazyImage 
+            src={userData?.avatar} 
+            alt="Avatar" 
+            containerClassName="w-10 h-10 rounded-full overflow-hidden border border-zinc-200" 
+          />
           <h2 className="text-xl font-bold text-primary tracking-tight">Digital Curator</h2>
         </div>
         <button className="p-2 hover:bg-zinc-100 rounded-full transition-colors">
@@ -67,15 +64,11 @@ export const MenuView: React.FC<MenuViewProps> = ({ setTab }) => {
         >
           <div className="flex items-center gap-4">
             <div className="relative">
-              <div className="w-16 h-16 rounded-full overflow-hidden border border-zinc-100">
-                {userData?.avatar ? (
-                  <img src={userData.avatar} alt="Avatar" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                    <Users className="w-8 h-8 text-zinc-300" />
-                  </div>
-                )}
-              </div>
+              <LazyImage 
+                src={userData?.avatar} 
+                alt="Avatar" 
+                containerClassName="w-16 h-16 rounded-full overflow-hidden border border-zinc-100" 
+              />
               <div className="absolute bottom-0 right-0 w-4 h-4 bg-green-500 border-2 border-white rounded-full"></div>
             </div>
             <div>

@@ -1,0 +1,158 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // HELPERS
+    // ===============================================================
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Role-based access
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email in ["rakibulhasantohin@gmail.com", "rakibulhasantuhin010@gmail.com"] ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin")
+      );
+    }
+    
+    // Validation Blueprints
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 256;
+    }
+    
+    function isValidPost(data) {
+      return data.keys().hasAll(['userId', 'text', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.text is string && data.text.size() <= 3000;
+    }
+    
+    function isValidFriendship(data) {
+      return data.keys().hasAll(['uids', 'createdAt']) &&
+             data.uids is list && data.uids.size() == 2 &&
+             request.auth.uid in data.uids;
+    }
+
+    // ===============================================================
+    // DEFAULT DENY
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // COLLECTIONS
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming());
+
+      match /savedPosts/{postId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    match /posts/{postId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(postId) && isValidPost(incoming());
+      allow update: if isSignedIn() && isValidPost(incoming()) && (existing().userId == request.auth.uid || isAdmin());
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+
+      match /reactions/{userId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && isValidId(userId) && userId == request.auth.uid;
+      }
+    }
+
+    match /friendships/{friendshipId} {
+      allow list: if isSignedIn() && (
+        isAdmin() || 
+        (resource != null && resource.data.uids.size() > 0 && request.auth.uid in resource.data.uids)
+      );
+      allow get: if isSignedIn() && isValidId(friendshipId) && (isAdmin() || request.auth.uid in resource.data.uids);
+      allow create: if isSignedIn() && isValidId(friendshipId) && isValidFriendship(incoming());
+      allow delete: if isSignedIn() && (request.auth.uid in existing().uids || isAdmin());
+    }
+
+    match /friendRequests/{requestId} {
+      allow list: if isSignedIn() && (
+        isAdmin() || 
+        resource.data.fromUserId == request.auth.uid || 
+        resource.data.toUserId == request.auth.uid
+      );
+      allow get: if isSignedIn() && (
+        isAdmin() || 
+        resource.data.fromUserId == request.auth.uid || 
+        resource.data.toUserId == request.auth.uid
+      );
+      allow create: if isSignedIn() && incoming().fromUserId == request.auth.uid;
+      allow update, delete: if isSignedIn() && (
+        existing().fromUserId == request.auth.uid || 
+        existing().toUserId == request.auth.uid || 
+        isAdmin()
+      );
+    }
+
+    match /chats/{chatId} {
+      allow read: if isSignedIn() && (request.auth.uid in existing().participants || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid in incoming().participants;
+      allow update: if isSignedIn() && (request.auth.uid in existing().participants || isAdmin());
+      
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && (request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants || isAdmin());
+        allow create: if isSignedIn() && request.auth.uid == incoming().senderId;
+      }
+    }
+
+    match /follows/{followId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().followerId == request.auth.uid;
+      allow delete: if isSignedIn() && (existing().followerId == request.auth.uid || isAdmin());
+    }
+
+    match /notifications/{notificationId} {
+      allow list: if isSignedIn() && resource.data.toUserId == request.auth.uid;
+      allow get: if isSignedIn() && (resource.data.toUserId == request.auth.uid || isAdmin());
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (resource.data.toUserId == request.auth.uid || isAdmin());
+    }
+
+    match /stories/{storyId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isSignedIn() && (
+        existing().userId == request.auth.uid || 
+        isAdmin() ||
+        incoming().diff(existing()).affectedKeys().hasOnly(['views'])
+      );
+      allow delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+
+    match /comments/{commentId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin());
+    }
+  }
+}

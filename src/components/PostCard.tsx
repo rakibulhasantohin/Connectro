@@ -1,33 +1,23 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { LazyImage } from './LazyImage';
 import { CommentModal } from './CommentModal';
 import { 
   Heart, 
   MessageCircle, 
-  Share2, 
-  Globe, 
+  Send, 
   MoreHorizontal, 
-  X, 
   Bookmark,
   Play,
   Pause,
   Volume2,
   VolumeX,
-  ThumbsUp,
   BadgeCheck,
   User,
-  Check,
-  Edit2,
-  Trash2,
-  Laugh,
-  Sparkles,
-  Angry,
-  Lock,
-  Users as UsersIcon,
   ChevronDown,
   Loader2,
   ChevronLeft,
   ChevronRight,
-  Music
+  Share2
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { auth, db, handleFirestoreError, OperationType } from '../firebase';
@@ -49,8 +39,7 @@ interface PostCardProps {
     userName?: string;
     userAvatar?: string;
     user?: { name: string; avatar: string; verified?: boolean };
-    createdAt?: string;
-    time?: string;
+    createdAt?: any;
     privacy: string;
     text: string;
     image?: string;
@@ -63,877 +52,297 @@ interface PostCardProps {
 }
 
 const REACTION_TYPES = [
-  { type: 'like', icon: ThumbsUp, color: 'text-blue-500', bg: 'bg-blue-50', label: 'Like' },
-  { type: 'love', icon: Heart, color: 'text-rose-500', bg: 'bg-rose-50', label: 'Love' },
-  { type: 'haha', icon: Laugh, color: 'text-amber-500', bg: 'bg-amber-50', label: 'Haha' },
-  { type: 'wow', icon: Sparkles, color: 'text-yellow-500', bg: 'bg-yellow-50', label: 'Wow' },
-  { type: 'angry', icon: Angry, color: 'text-orange-500', bg: 'bg-orange-50', label: 'Angry' },
+  { type: 'like', icon: "👍", color: 'text-blue-500', label: 'Like' },
+  { type: 'love', icon: "❤️", color: 'text-red-500', label: 'Love' },
+  { type: 'care', icon: "🥰", color: 'text-yellow-500', label: 'Care' },
+  { type: 'haha', icon: "😆", color: 'text-yellow-500', label: 'Haha' },
+  { type: 'wow', icon: "😮", color: 'text-yellow-500', label: 'Wow' },
+  { type: 'sad', icon: "😢", color: 'text-yellow-500', label: 'Sad' },
+  { type: 'angry', icon: "😡", color: 'text-red-600', label: 'Angry' },
 ];
 
-const ReactionUserItem: React.FC<{ 
-  reaction: ReactionData; 
-  onViewProfile?: (userId: string) => void;
-  onClose: () => void;
-}> = ({ reaction, onViewProfile, onClose }) => {
-  const { user, userData: currentUserData } = useUser();
-  const [friendStatus, setFriendStatus] = useState<'none' | 'sent' | 'received' | 'friends'>('none');
-  const [requestId, setRequestId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user || user.uid === reaction.userId) {
-      setLoading(false);
-      return;
-    }
-
-    const friendshipId = [user.uid, reaction.userId].sort().join('_');
-    
-    // Listen for friendship
-    const unsubFriendship = onSnapshot(doc(db, 'friendships', friendshipId), (fDoc) => {
-      if (fDoc.exists()) {
-        setFriendStatus('friends');
-        setLoading(false);
-      } else {
-        // Check for outgoing request
-        const qOutgoing = query(
-          collection(db, 'friendRequests'),
-          where('fromUserId', '==', user.uid),
-          where('toUserId', '==', reaction.userId)
-        );
-        const unsubOutgoing = onSnapshot(qOutgoing, (outSnap) => {
-          if (!outSnap.empty) {
-            setFriendStatus('sent');
-            setRequestId(outSnap.docs[0].id);
-            setLoading(false);
-          } else {
-            // Check for incoming request
-            const qIncoming = query(
-              collection(db, 'friendRequests'),
-              where('fromUserId', '==', reaction.userId),
-              where('toUserId', '==', user.uid)
-            );
-            const unsubIncoming = onSnapshot(qIncoming, (inSnap) => {
-              if (!inSnap.empty) {
-                setFriendStatus('received');
-                setRequestId(inSnap.docs[0].id);
-              } else {
-                setFriendStatus('none');
-                setRequestId(null);
-              }
-              setLoading(false);
-            }, (error) => {
-              console.error("Error fetching incoming request:", error);
-              setLoading(false);
-            });
-          }
-        }, (error) => {
-          console.error("Error fetching outgoing request:", error);
-          setLoading(false);
-        });
-      }
-    }, (error) => {
-      console.error("Error fetching friendship:", error);
-      setLoading(false);
-    });
-
-    return () => unsubFriendship();
-  }, [user, reaction.userId]);
-
-  const handleConnect = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!user || !currentUserData || loading || user.uid === reaction.userId) return;
-    setLoading(true);
-
-    try {
-      if (friendStatus === 'none') {
-        // Send request
-        await addDoc(collection(db, 'friendRequests'), {
-          fromUserId: user.uid,
-          toUserId: reaction.userId,
-          status: 'pending',
-          createdAt: serverTimestamp()
-        });
-
-        // Create notification
-        await addDoc(collection(db, 'notifications'), {
-          toUserId: reaction.userId,
-          fromUserId: user.uid,
-          fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
-          fromUserAvatar: currentUserData.avatar || '',
-          type: 'friend_request',
-          text: 'sent you a friend request',
-          read: false,
-          createdAt: serverTimestamp()
-        });
-      } else if (friendStatus === 'received' && requestId) {
-        // Accept request
-        const batch = writeBatch(db);
-        const friendshipId = [user.uid, reaction.userId].sort().join('_');
-        
-        batch.delete(doc(db, 'friendRequests', requestId));
-        batch.set(doc(db, 'friendships', friendshipId), {
-          uids: [user.uid, reaction.userId],
-          createdAt: serverTimestamp()
-        });
-        batch.set(doc(db, 'chats', friendshipId), {
-          participants: [user.uid, reaction.userId],
-          lastMessage: 'You are now friends! Say hi.',
-          lastMessageAt: serverTimestamp(),
-          unreadCount: {
-            [user.uid]: 0,
-            [reaction.userId]: 0
-          }
-        });
-        
-        const notificationRef = doc(collection(db, 'notifications'));
-        batch.set(notificationRef, {
-          toUserId: reaction.userId,
-          fromUserId: user.uid,
-          fromUserName: `${currentUserData.firstName} ${currentUserData.lastName}`,
-          fromUserAvatar: currentUserData.avatar || '',
-          type: 'friend_accept',
-          text: 'accepted your friend request',
-          read: false,
-          createdAt: serverTimestamp()
-        });
-
-        await batch.commit();
-      }
-    } catch (error) {
-      console.error("Error in handleConnect:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div 
-      onClick={() => { onClose(); onViewProfile?.(reaction.userId); }}
-      className="flex items-center justify-between px-5 py-4 hover:bg-zinc-50 transition-colors cursor-pointer group"
-    >
-      <div className="flex items-center gap-3">
-        <div className="relative">
-          <div className="w-12 h-12 rounded-[1.2rem] overflow-hidden border-2 border-zinc-50 group-hover:border-primary/30 transition-all duration-500">
-            {reaction.userAvatar ? (
-              <img 
-                src={reaction.userAvatar} 
-                alt={reaction.userName} 
-                className="w-full h-full object-cover" 
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                <User className="w-5 h-5 text-zinc-400" />
-              </div>
-            )}
-          </div>
-          <div className={cn(
-            "absolute -bottom-1 -right-1 rounded-lg p-1 border-2 border-white shadow-sm",
-            REACTION_TYPES.find(r => r.type === reaction.type)?.bg || 'bg-rose-500'
-          )}>
-            {(() => {
-              const Icon = REACTION_TYPES.find(r => r.type === reaction.type)?.icon || Heart;
-              return <Icon className={cn("w-2.5 h-2.5 fill-current", REACTION_TYPES.find(r => r.type === reaction.type)?.color || 'text-white')} />;
-            })()}
-          </div>
-        </div>
-        <div className="flex flex-col">
-          <span className="font-bold text-[15px] text-zinc-900 leading-tight">{reaction.userName}</span>
-          {user?.uid === reaction.userId && (
-            <span className="text-[10px] font-black text-primary uppercase tracking-widest">You</span>
-          )}
-        </div>
-      </div>
-      {user?.uid !== reaction.userId && (
-        <button 
-          onClick={handleConnect}
-          disabled={loading || friendStatus === 'sent' || friendStatus === 'friends'}
-          className={cn(
-            "px-5 py-2 rounded-xl font-bold text-xs transition-all active:scale-90 shadow-md",
-            friendStatus === 'none' ? "bg-primary text-white hover:bg-primary-hover shadow-primary/20" :
-            friendStatus === 'sent' ? "bg-zinc-100 text-zinc-500 shadow-none cursor-default" :
-            friendStatus === 'received' ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-emerald-500/20" :
-            "bg-zinc-100 text-zinc-500 shadow-none cursor-default"
-          )}
-        >
-          {loading ? '...' : 
-           friendStatus === 'none' ? 'Connect' : 
-           friendStatus === 'sent' ? 'Requested' : 
-           friendStatus === 'received' ? 'Accept' : 
-           'Friends'}
-        </button>
-      )}
-    </div>
-  );
-};
-
 export const PostCard: React.FC<PostCardProps> = ({ post, onViewProfile }) => {
-  const { userData } = useUser();
+  const { userData, user: currentUser } = useUser();
   const [reactions, setReactions] = useState<ReactionData[]>([]);
   const [userReaction, setUserReaction] = useState<string | null>(null);
   const [isSaved, setIsSaved] = useState(false);
   const [showComments, setShowComments] = useState(false);
-  const [showLikes, setShowLikes] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editedText, setEditedText] = useState(post.text);
-  const [showMenu, setShowMenu] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showReactionPicker, setShowReactionPicker] = useState(false);
-  const [showPrivacyMenu, setShowPrivacyMenu] = useState(false);
+  const [showMenu, setShowMenu] = useState(false);
+  const [isLikeAnimating, setIsLikeAnimating] = useState(false);
+  const [showDoubleTapHeart, setShowDoubleTapHeart] = useState(false);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Normalize data
-  const displayName = post.user?.name || post.userName || 'Unknown User';
+  const displayName = post.user?.name || post.userName || 'User';
   const displayAvatar = post.user?.avatar || post.userAvatar || '';
   const isVerified = post.user?.verified || false;
   const postUserId = post.userId;
-  const isOwner = postUserId === auth.currentUser?.uid;
+  const isOwner = postUserId === currentUser?.uid;
 
   useEffect(() => {
-    if (!auth.currentUser) return;
-    const savedRef = doc(db, 'users', auth.currentUser.uid, 'savedPosts', post.id.toString());
-    const unsubscribe = onSnapshot(savedRef, (doc) => {
-      setIsSaved(doc.exists());
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, `users/${auth.currentUser?.uid}/savedPosts/${post.id}`);
-    });
-    return () => unsubscribe();
-  }, [post.id]);
+    if (!currentUser) return;
+    const unsubSaved = onSnapshot(
+      doc(db, 'users', currentUser.uid, 'savedPosts', post.id.toString()), 
+      (doc) => {
+        setIsSaved(doc.exists());
+      },
+      (error) => handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}/savedPosts/${post.id}`)
+    );
 
-  useEffect(() => {
     const reactionsRef = collection(db, 'posts', post.id.toString(), 'reactions');
-    const q = query(reactionsRef);
-    
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const reactionsData: ReactionData[] = [];
-      let currentUserReaction: string | null = null;
-      
-      snapshot.forEach((doc) => {
-        const data = doc.data() as ReactionData;
-        reactionsData.push(data);
-        if (data.userId === auth.currentUser?.uid) {
-          currentUserReaction = data.type;
-        }
-      });
-      
-      setReactions(reactionsData);
-      setUserReaction(currentUserReaction);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `posts/${post.id}/reactions`);
-    });
+    const unsubReactions = onSnapshot(
+      query(reactionsRef), 
+      (snapshot) => {
+        const data: ReactionData[] = [];
+        let currentReaction: string | null = null;
+        snapshot.forEach(doc => {
+          const r = doc.data() as ReactionData;
+          data.push(r);
+          if (r.userId === currentUser.uid) currentReaction = r.type;
+        });
+        setReactions(data);
+        setUserReaction(currentReaction);
+      },
+      (error) => handleFirestoreError(error, OperationType.LIST, `posts/${post.id}/reactions`)
+    );
 
-    return () => unsubscribe();
-  }, [post.id]);
-
-  const createNotification = async (type: string) => {
-    if (!auth.currentUser || isOwner || !postUserId) return;
-
-    try {
-      await addDoc(collection(db, 'notifications'), {
-        toUserId: postUserId,
-        fromUserId: auth.currentUser.uid,
-        fromUserName: userData?.firstName + ' ' + userData?.lastName,
-        fromUserAvatar: userData?.avatar || '',
-        type,
-        postId: post.id.toString(),
-        createdAt: Timestamp.now(),
-        read: false
-      });
-    } catch (error) {
-      console.error("Error creating notification:", error);
-    }
-  };
+    return () => {
+      unsubSaved();
+      unsubReactions();
+    };
+  }, [post.id, currentUser]);
 
   const handleReaction = async (type: string) => {
-    if (!auth.currentUser) return;
+    if (!currentUser) return;
     setShowReactionPicker(false);
-
-    const reactionRef = doc(db, 'posts', post.id.toString(), 'reactions', auth.currentUser.uid);
+    
+    // Optimistic Update
+    const prevReaction = userReaction;
+    const isNew = !userReaction;
+    setUserReaction(type === userReaction ? null : type);
+    
+    const reactionRef = doc(db, 'posts', post.id.toString(), 'reactions', currentUser.uid);
     const postRef = doc(db, 'posts', post.id.toString());
 
     try {
-      if (userReaction === type) {
-        // Remove reaction
+      if (prevReaction === type) {
         await deleteDoc(reactionRef);
-        await updateDoc(postRef, {
-          likes: increment(-1)
-        });
+        await updateDoc(postRef, { likes: increment(-1) });
       } else {
-        // Add or change reaction
-        const isNew = !userReaction;
         await setDoc(reactionRef, {
-          userId: auth.currentUser.uid,
-          userName: userData?.firstName + ' ' + userData?.lastName,
+          userId: currentUser.uid,
+          userName: `${userData?.firstName} ${userData?.lastName}`,
           userAvatar: userData?.avatar || '',
           type,
-          createdAt: Timestamp.now()
+          createdAt: serverTimestamp()
         });
-
         if (isNew) {
-          await updateDoc(postRef, {
-            likes: increment(1)
-          });
-          await createNotification(type);
+          await updateDoc(postRef, { likes: increment(1) });
+          if (!isOwner && postUserId) {
+            await addDoc(collection(db, 'notifications'), {
+              toUserId: postUserId,
+              fromUserId: currentUser.uid,
+              fromUserName: `${userData?.firstName} ${userData?.lastName}`,
+              fromUserAvatar: userData?.avatar || '',
+              type: 'like',
+              postId: post.id.toString(),
+              createdAt: serverTimestamp(),
+              read: false
+            });
+          }
         }
       }
     } catch (error) {
-      console.error("Error handling reaction:", error);
+      console.error("Error reaction:", error);
+      // Rollback on error
+      setUserReaction(prevReaction);
     }
   };
 
-  const handleLikeClick = () => {
-    if (userReaction) {
-      handleReaction(userReaction);
-    } else {
-      handleReaction('love');
-    }
-  };
-
-  const handleTouchStart = () => {
-    longPressTimer.current = setTimeout(() => {
-      setShowReactionPicker(true);
-    }, 500);
-  };
-
-  const handleTouchEnd = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-    }
-  };
-
-  const handleComment = () => {
-    setShowComments(true);
-  };
-
-  const handleShare = async () => {
-    const shareUrl = `${window.location.origin}/post/${post.id}`;
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      await updateDoc(doc(db, 'posts', post.id.toString()), {
-        shares: increment(1)
-      });
-      await createNotification('share');
-      alert('Link copied to clipboard!');
-    } catch (error) {
-      console.error("Error sharing:", error);
-    }
+  const handleDoubleTap = () => {
+    setShowDoubleTapHeart(true);
+    if (!userReaction) handleReaction('love');
+    setTimeout(() => setShowDoubleTapHeart(false), 800);
   };
 
   const handleToggleSave = async () => {
-    if (!auth.currentUser) return;
-    const savedRef = doc(db, 'users', auth.currentUser.uid, 'savedPosts', post.id.toString());
-    try {
-      if (isSaved) {
-        await deleteDoc(savedRef);
-      } else {
-        await setDoc(savedRef, {
-          savedAt: Timestamp.now(),
-          postId: post.id.toString()
-        });
-      }
-    } catch (error) {
-      console.error("Error toggling save:", error);
-    }
-  };
-
-  const handleSave = async () => {
-    try {
-      await updateDoc(doc(db, 'posts', post.id.toString()), {
-        text: editedText
-      });
-      setIsEditing(false);
-      setShowMenu(false);
-    } catch (error) {
-      console.error("Error updating post:", error);
-    }
-  };
-
-  const handleUpdatePrivacy = async (newPrivacy: string) => {
-    try {
-      await updateDoc(doc(db, 'posts', post.id.toString()), {
-        privacy: newPrivacy
-      });
-      setShowPrivacyMenu(false);
-      setShowMenu(false);
-    } catch (error) {
-      console.error("Error updating privacy:", error);
-    }
+    if (!currentUser) return;
+    const savedRef = doc(db, 'users', currentUser.uid, 'savedPosts', post.id.toString());
+    if (isSaved) await deleteDoc(savedRef);
+    else await setDoc(savedRef, { savedAt: serverTimestamp(), postId: post.id.toString() });
   };
 
   const handleDelete = async () => {
-    if (!postUserId) return;
-
+    if (!isOwner) return;
     try {
       await deleteDoc(doc(db, 'posts', post.id.toString()));
-      
-      // Decrement postCount in user document
-      const userRef = doc(db, 'users', postUserId);
-      await updateDoc(userRef, {
-        postCount: increment(-1)
-      });
-      
-      setShowMenu(false);
-    } catch (error) {
-      console.error("Error deleting post:", error);
-    }
-  };
-  
-  const formatTime = (dateValue?: any) => {
-    if (!dateValue) return post.time || 'Just now';
-    try {
-      let date: Date;
-      if (typeof dateValue === 'string') {
-        date = new Date(dateValue);
-      } else if (dateValue && typeof dateValue.toDate === 'function') {
-        date = dateValue.toDate();
-      } else {
-        date = new Date(dateValue);
+      if (postUserId) {
+        await updateDoc(doc(db, 'users', postUserId), { postCount: increment(-1) });
       }
-      
-      const now = new Date();
-      const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
-      
-      if (diffInSeconds < 60) return 'Just now';
-      if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m`;
-      if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h`;
-      if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)}d`;
-      return date.toLocaleDateString();
     } catch (e) {
-      return post.time || 'Just now';
+      console.error(e);
     }
   };
 
-  const displayTime = formatTime(post.createdAt);
-
-  const formatCount = (count: number | string) => {
-    if (typeof count === 'string') return count;
-    if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
-    if (count >= 1000) return (count / 1000).toFixed(1) + 'K';
-    return count.toString();
+  const formatTime = (ts: any) => {
+    if (!ts) return 'Just now';
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    const diff = (Date.now() - date.getTime()) / 1000;
+    if (diff < 60) return 'Just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h`;
+    if (diff < 604800) return `${Math.floor(diff / 86400)}d`;
+    return date.toLocaleDateString();
   };
-
-  const displayLikes = formatCount(reactions.length);
-  
-  // Video states
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [isMuted, setIsMuted] = useState(true);
-  const videoRef = useRef<HTMLVideoElement>(null);
-
-  const togglePlay = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        videoRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      const currentProgress = (videoRef.current.currentTime / videoRef.current.duration) * 100;
-      setProgress(currentProgress);
-    }
-  };
-
-  const handleProgressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (videoRef.current) {
-      const newTime = (parseFloat(e.target.value) / 100) * videoRef.current.duration;
-      videoRef.current.currentTime = newTime;
-      setProgress(parseFloat(e.target.value));
-    }
-  };
-
-  const handleProfileClick = () => {
-    if (onViewProfile && postUserId) {
-      onViewProfile(postUserId);
-    }
-  };
-
-  const currentUserReactionData = REACTION_TYPES.find(r => r.type === userReaction);
-  const CurrentReactionIcon = currentUserReactionData?.icon || Heart;
 
   return (
-    <article className="bg-white rounded-[2rem] shadow-sm border border-zinc-100/80 mb-4 overflow-hidden mx-4">
-      <div className="flex justify-between items-center px-5 py-4">
-        <div className="flex items-center gap-3">
-          <div onClick={handleProfileClick} className="cursor-pointer group relative">
-            <div className="w-12 h-12 rounded-[1.2rem] overflow-hidden bg-zinc-100 border border-zinc-200/50 group-hover:border-primary/50 transition-colors">
-              {displayAvatar ? (
-                <img src={displayAvatar} alt={displayName} className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                  <User className="w-6 h-6 text-zinc-400" />
-                </div>
-              )}
+    <article className="bg-black border-b border-zinc-900/50 pb-4">
+      {/* Post Header */}
+      <div className="flex items-center justify-between px-3 py-3">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={() => onViewProfile?.(postUserId || '')}>
+          <div className="w-8 h-8 rounded-full p-[2px] connectro-gradient">
+            <div className="w-full h-full rounded-full border-2 border-black overflow-hidden bg-zinc-900">
+              <img src={displayAvatar} className="w-full h-full object-cover" alt="" />
             </div>
           </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h3 
-                onClick={handleProfileClick}
-                className="text-[15px] font-bold text-zinc-900 leading-tight hover:text-primary cursor-pointer transition-colors"
-              >
-                {displayName}
-              </h3>
-              {isVerified && (
-                <BadgeCheck className="w-4 h-4 text-primary fill-primary/10" />
-              )}
-            </div>
-            <div className="flex items-center text-xs text-zinc-500 font-medium gap-1.5 mt-0.5">
-              <span>{displayTime}</span>
-              <span>•</span>
-              {post.privacy === 'public' && <Globe className="w-3 h-3" />}
-              {post.privacy === 'friends' && <UsersIcon className="w-3 h-3" />}
-              {post.privacy === 'private' && <Lock className="w-3 h-3" />}
-            </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[13px] font-bold text-white">{displayName}</span>
+            {isVerified && <BadgeCheck className="w-3.5 h-3.5 text-blue-500 fill-blue-500/10" />}
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <button 
-            onClick={handleToggleSave}
-            className={cn(
-              "w-9 h-9 rounded-xl flex items-center justify-center transition-all active:scale-90",
-              isSaved ? "text-amber-500 bg-amber-50" : "text-zinc-400 hover:bg-zinc-50"
-            )}
-          >
-            <Bookmark className={cn("w-5 h-5", isSaved && "fill-current")} />
-          </button>
+        <button onClick={() => setShowMenu(!showMenu)} className="text-white p-1">
+          <MoreHorizontal className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Media */}
+      <div 
+        className="relative aspect-square bg-zinc-900 overflow-hidden select-none"
+        onDoubleClick={handleDoubleTap}
+      >
+        {post.video ? (
+          <video src={post.video} autoPlay muted loop playsInline className="w-full h-full object-cover" />
+        ) : (
+          <img src={post.image} className="w-full h-full object-cover" alt="" />
+        )}
+        
+        <AnimatePresence>
+          {showDoubleTapHeart && (
+            <motion.div 
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 1.5, opacity: 0 }}
+              className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"
+            >
+              <Heart className="w-20 h-20 text-white fill-white drop-shadow-lg" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="px-3 py-3 flex items-center justify-between relative">
+        <div className="flex items-center gap-4">
           <div className="relative">
             <button 
-              onClick={() => setShowMenu(!showMenu)}
-              className="w-9 h-9 rounded-xl flex items-center justify-center hover:bg-zinc-50 text-zinc-400 transition-all active:scale-90"
+              onMouseEnter={() => setShowReactionPicker(true)}
+              onClick={() => handleReaction('like')}
+              className={cn(
+                "transition-transform active:scale-90",
+                userReaction ? "text-red-500" : "text-white"
+              )}
             >
-              <MoreHorizontal className="w-5 h-5" />
+              <Heart className={cn("w-6 h-6", userReaction === 'love' || userReaction === 'like' ? "fill-current" : "")} />
             </button>
-            {showMenu && isOwner && (
-              <div className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-lg border border-zinc-100 p-1 z-50">
-                <button 
-                  onClick={() => { setIsEditing(true); setShowMenu(false); }}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 rounded-lg"
-                >
-                  <Edit2 className="w-4 h-4" /> Edit Text
-                </button>
-                <button 
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-lg"
-                >
-                  <Trash2 className="w-4 h-4" /> Delete Post
-                </button>
-                
-                <div className="relative">
-                  <button 
-                    onClick={() => setShowPrivacyMenu(!showPrivacyMenu)}
-                    className="flex items-center justify-between w-full px-3 py-2 text-sm text-zinc-700 hover:bg-zinc-50 rounded-lg"
-                  >
-                    <div className="flex items-center gap-2">
-                      <Globe className="w-4 h-4" /> Privacy
-                    </div>
-                    <ChevronDown className="w-3 h-3" />
-                  </button>
-                  
-                  {showPrivacyMenu && (
-                    <div className="absolute right-full top-0 mr-2 w-40 bg-white rounded-xl shadow-xl border border-zinc-100 p-1">
-                      <button 
-                        onClick={() => handleUpdatePrivacy('public')}
-                        className={cn(
-                          "flex items-center gap-2 w-full px-3 py-2 text-xs font-bold rounded-lg",
-                          post.privacy === 'public' ? "bg-primary/10 text-primary" : "text-zinc-600 hover:bg-zinc-50"
-                        )}
-                      >
-                        <Globe className="w-3 h-3" /> Public
-                      </button>
-                      <button 
-                        onClick={() => handleUpdatePrivacy('friends')}
-                        className={cn(
-                          "flex items-center gap-2 w-full px-3 py-2 text-xs font-bold rounded-lg",
-                          post.privacy === 'friends' ? "bg-primary/10 text-primary" : "text-zinc-600 hover:bg-zinc-50"
-                        )}
-                      >
-                        <UsersIcon className="w-3 h-3" /> Friends
-                      </button>
-                      <button 
-                        onClick={() => handleUpdatePrivacy('private')}
-                        className={cn(
-                          "flex items-center gap-2 w-full px-3 py-2 text-xs font-bold rounded-lg",
-                          post.privacy === 'private' ? "bg-primary/10 text-primary" : "text-zinc-600 hover:bg-zinc-50"
-                        )}
-                      >
-                        <Lock className="w-3 h-3" /> Private
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <button 
-                  onClick={handleDelete}
-                  className="flex items-center gap-2 w-full px-3 py-2 text-sm text-rose-600 hover:bg-rose-50 rounded-lg"
-                >
-                  <Trash2 className="w-4 h-4" /> Delete Post
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="px-5 pb-4 text-[15px] text-zinc-800 leading-relaxed whitespace-pre-wrap">
-        {isEditing ? (
-          <div className="space-y-2">
-            <textarea
-              className="w-full p-3 border border-zinc-200 rounded-xl focus:ring-2 focus:ring-primary outline-none"
-              value={editedText}
-              onChange={(e) => setEditedText(e.target.value)}
-            />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setIsEditing(false)} className="text-sm text-zinc-500 hover:text-zinc-700">Cancel</button>
-              <button onClick={handleSave} className="flex items-center gap-1 text-sm text-primary font-bold hover:text-primary-hover">
-                <Check className="w-4 h-4" /> Save
-              </button>
-            </div>
-          </div>
-        ) : (
-          post.text
-        )}
-      </div>
-
-      {post.image && (
-        <div className="px-3 pb-3">
-          <div className="w-full bg-zinc-100 rounded-[1.5rem] overflow-hidden relative group cursor-pointer">
-            <img 
-              src={post.image} 
-              alt="Post" 
-              loading="lazy"
-              className="w-full h-auto max-h-[500px] object-cover transition-transform duration-1000 ease-out group-hover:scale-105" 
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors duration-300" />
-          </div>
-        </div>
-      )}
-
-      {post.video && (
-        <div className="px-3 pb-3">
-          <div className="w-full bg-black rounded-[1.5rem] overflow-hidden relative group aspect-video flex items-center justify-center">
-            <video 
-              ref={videoRef}
-              src={post.video} 
-              className="w-full h-full object-contain cursor-pointer"
-              muted={isMuted}
-              playsInline
-              onTimeUpdate={handleTimeUpdate}
-              onClick={togglePlay}
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-              onEnded={() => {
-                setIsPlaying(false);
-                setProgress(0);
-                if (videoRef.current) videoRef.current.currentTime = 0;
-              }}
-            />
             
-            {!isPlaying && (
-              <button 
-                onClick={togglePlay}
-                className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/30 transition-colors z-10"
-              >
-                <div className="w-14 h-14 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-md border border-white/20 transform transition-transform hover:scale-110 active:scale-95">
-                  <Play className="w-6 h-6 text-white fill-current ml-1" />
-                </div>
-              </button>
-            )}
-
-            <div className="absolute inset-x-0 bottom-0 flex flex-col justify-end bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20">
-              <div className="px-4 py-3 flex flex-col gap-2">
-                <div className="relative w-full h-1 group/progress mb-1">
-                  <input 
-                    type="range"
-                    min="0"
-                    max="100"
-                    step="0.1"
-                    value={progress}
-                    onChange={handleProgressChange}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
-                  />
-                  <div className="absolute inset-0 bg-white/20 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-primary relative transition-all duration-75" 
-                      style={{ width: `${progress}%` }}
+            <AnimatePresence>
+              {showReactionPicker && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10, scale: 0.8 }}
+                  animate={{ opacity: 1, y: -45, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.8 }}
+                  className="absolute left-0 bg-zinc-900 border border-zinc-800 rounded-full px-2 py-1.5 flex gap-2.5 z-[100] shadow-2xl"
+                  onMouseLeave={() => setShowReactionPicker(false)}
+                >
+                  {REACTION_TYPES.map((r) => (
+                    <button 
+                      key={r.type}
+                      onClick={() => handleReaction(r.type)}
+                      className="text-2xl hover:scale-150 transition-transform active:scale-95 px-0.5"
+                      title={r.label}
                     >
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full shadow-lg scale-0 group-hover/progress:scale-100 transition-transform z-40" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-4">
-                    <button onClick={togglePlay} className="text-white hover:text-primary transition-colors">
-                      {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
+                      {r.icon}
                     </button>
-                    <button onClick={() => setIsMuted(!isMuted)} className="text-white hover:text-primary transition-colors">
-                      {isMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
-                    </button>
-                  </div>
-                  <div className="text-white text-xs font-bold tracking-tight">
-                    {videoRef.current && !isNaN(videoRef.current.duration) ? 
-                      `${Math.floor(videoRef.current.currentTime / 60)}:${Math.floor(videoRef.current.currentTime % 60).toString().padStart(2, '0')} / ${Math.floor(videoRef.current.duration / 60)}:${Math.floor(videoRef.current.duration % 60).toString().padStart(2, '0')}` 
-                      : '0:00 / 0:00'
-                    }
-                  </div>
-                </div>
-              </div>
-            </div>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
+          
+          <button onClick={() => setShowComments(true)} className="text-white active:scale-90 transition-all">
+            <MessageCircle className="w-6 h-6" />
+          </button>
+          <button className="text-white active:scale-90 transition-all">
+            <Send className="w-6 h-6 -rotate-12" />
+          </button>
         </div>
-      )}
-
-      {(reactions.length > 0 || Number(post.comments) > 0 || Number(post.shares) > 0) && (
-        <div className="px-5 py-3 flex justify-between items-center text-zinc-500 text-[13px] border-t border-zinc-50">
-          <div className="flex items-center gap-4">
-            {reactions.length > 0 && (
-              <div 
-                className="flex items-center gap-2 cursor-pointer group"
-                onClick={() => setShowLikes(true)}
-              >
-                <div className="flex -space-x-1.5">
-                  {Array.from(new Set(reactions.map(r => r.type))).slice(0, 3).map((type, idx) => {
-                    const rData = REACTION_TYPES.find(r => r.type === type);
-                    const Icon = rData?.icon || Heart;
-                    return (
-                      <div 
-                        key={type} 
-                        className={cn(
-                          "w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-sm",
-                          rData?.bg || 'bg-rose-500'
-                        )}
-                        style={{ zIndex: 10 - idx }}
-                      >
-                        <Icon className={cn("w-2.5 h-2.5 fill-current", rData?.color || 'text-white')} />
-                      </div>
-                    );
-                  })}
-                </div>
-                <span className="font-bold text-zinc-600 group-hover:text-primary transition-colors text-xs">
-                  {userReaction ? (
-                    reactions.length === 1 ? 'You' : `You and ${formatCount(reactions.length - 1)} others`
-                  ) : (
-                    formatCount(reactions.length)
-                  )}
-                </span>
-              </div>
-            )}
-          </div>
-          <div className="flex gap-4 font-bold text-zinc-400 text-xs">
-            {Number(post.comments) > 0 && (
-              <span className="hover:text-zinc-600 cursor-pointer">{formatCount(post.comments)} comments</span>
-            )}
-            {Number(post.shares) > 0 && (
-              <span className="hover:text-zinc-600 cursor-pointer">{formatCount(post.shares)} shares</span>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="flex justify-between items-center px-3 py-2 border-t border-zinc-100/80 relative">
-        {showReactionPicker && (
-          <div 
-            className="absolute bottom-full left-4 mb-2 bg-white rounded-full shadow-2xl border border-zinc-100 p-1.5 flex gap-1.5 animate-in slide-in-from-bottom-4 duration-200 z-[60]"
-            onMouseLeave={() => setShowReactionPicker(false)}
-          >
-            {REACTION_TYPES.map((r) => (
-              <button
-                key={r.type}
-                onClick={() => handleReaction(r.type)}
-                className={cn(
-                  "w-10 h-10 rounded-full flex items-center justify-center transition-all hover:scale-125 active:scale-90",
-                  r.bg
-                )}
-              >
-                <r.icon className={cn("w-5 h-5 fill-current", r.color)} />
-              </button>
-            ))}
-          </div>
-        )}
-        <button 
-          onClick={handleLikeClick}
-          onMouseDown={handleTouchStart}
-          onMouseUp={handleTouchEnd}
-          onTouchStart={handleTouchStart}
-          onTouchEnd={handleTouchEnd}
-          className={cn(
-            "flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl transition-all active:scale-95",
-            userReaction ? (currentUserReactionData?.bg || "bg-rose-50") : "text-zinc-500 hover:bg-zinc-50"
-          )}
-        >
-          <CurrentReactionIcon className={cn("w-5 h-5", userReaction && (currentUserReactionData?.color || "text-rose-500 fill-current"))} />
-          <span className={cn("text-xs font-bold", userReaction && (currentUserReactionData?.color || "text-rose-500"))}>
-            {currentUserReactionData?.label || 'Like'}
-          </span>
-        </button>
-        <button 
-          onClick={handleComment}
-          className="flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl hover:bg-zinc-50 text-zinc-500 transition-all active:scale-95"
-        >
-          <MessageCircle className="w-5 h-5" />
-          <span className="text-xs font-bold">Comment</span>
-        </button>
-        <button 
-          onClick={handleShare}
-          className="flex-1 flex justify-center items-center gap-2 py-2.5 rounded-xl hover:bg-zinc-50 text-zinc-500 transition-all active:scale-95"
-        >
-          <Share2 className="w-5 h-5" />
-          <span className="text-xs font-bold">Share</span>
+        
+        <button onClick={handleToggleSave} className="text-white active:scale-90 transition-all">
+          <Bookmark className={cn("w-6 h-6", isSaved && "fill-current")} />
         </button>
       </div>
 
-      {/* Likes Modal Redesign */}
-      {showLikes && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-zinc-900/70 backdrop-blur-xl animate-in fade-in duration-300">
-          <div className="bg-white w-full max-w-md rounded-[2rem] overflow-hidden shadow-2xl animate-in zoom-in duration-300">
-            <div className="flex justify-between items-center p-5 border-b border-zinc-100">
-              <div className="flex gap-6">
-                <button className="text-primary font-black border-b-2 border-primary pb-2 text-xs uppercase tracking-widest">All</button>
-                <div className="flex items-center gap-2 text-zinc-400 font-bold pb-2 text-xs cursor-pointer hover:text-zinc-600 transition-colors uppercase tracking-widest">
-                  <div className="w-4 h-4 rounded-md bg-rose-500 flex items-center justify-center">
-                    <Heart className="w-2.5 h-2.5 text-white fill-white" />
-                  </div>
-                  <span>{displayLikes}</span>
-                </div>
-              </div>
-              <button 
-                onClick={() => setShowLikes(false)}
-                className="w-8 h-8 bg-zinc-100 rounded-xl flex items-center justify-center hover:bg-zinc-200 transition-all active:scale-90"
-              >
-                <X className="w-4 h-4 text-zinc-600" />
-              </button>
-            </div>
-            <div className="max-h-[60vh] overflow-y-auto no-scrollbar">
-              {reactions.map((reaction) => (
-                <ReactionUserItem 
-                  key={reaction.userId} 
-                  reaction={reaction} 
-                  onViewProfile={onViewProfile}
-                  onClose={() => setShowLikes(false)}
-                />
-              ))}
-            </div>
-          </div>
+      {/* Likes */}
+      <div className="px-3 pb-1.5">
+        {reactions.length > 0 && (
+          <p className="text-[13px] font-bold text-white">
+            {reactions.length === 1 
+              ? `${reactions[0].userName} liked this`
+              : `${reactions.length.toLocaleString()} likes`}
+          </p>
+        )}
+      </div>
+
+      {/* Caption */}
+      <div className="px-3 space-y-1">
+        <p className="text-[13px] text-white leading-tight">
+          <span className="font-bold mr-2">{displayName}</span>
+          {post.text}
+        </p>
+        
+        {post.comments > 0 && (
+          <button 
+            onClick={() => setShowComments(true)}
+            className="text-[13px] text-zinc-500 mt-1 block"
+          >
+            View all {post.comments} comments
+          </button>
+        )}
+        
+        <span className="text-[10px] text-zinc-500 uppercase tracking-tight block mt-1">
+          {formatTime(post.createdAt)}
+        </span>
+      </div>
+
+      {/* Menus */}
+      {showMenu && isOwner && (
+        <div className="fixed inset-0 bg-black/60 z-[300] flex items-end">
+          <motion.div 
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            className="w-full bg-zinc-900 rounded-t-3xl p-6 pb-12 space-y-4"
+          >
+            <button onClick={handleDelete} className="w-full text-red-500 font-bold py-3 text-center border-b border-zinc-800">
+              Delete Post
+            </button>
+            <button onClick={() => setShowMenu(false)} className="w-full text-white font-medium py-3 text-center">
+              Cancel
+            </button>
+          </motion.div>
         </div>
       )}
-      {showDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 shadow-xl w-full max-w-sm">
-            <h3 className="text-lg font-bold text-zinc-900 mb-4">Delete Post?</h3>
-            <p className="text-zinc-600 mb-6">Are you sure you want to delete this post? This action cannot be undone.</p>
-            <div className="flex gap-3">
-              <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 bg-zinc-100 text-zinc-700 py-2 rounded-xl font-bold">Cancel</button>
-              <button onClick={handleDelete} className="flex-1 bg-red-500 text-white py-2 rounded-xl font-bold">Delete</button>
-            </div>
-          </div>
-        </div>
-      )}
+
       {showComments && (
         <CommentModal postId={post.id.toString()} onClose={() => setShowComments(false)} />
       )}

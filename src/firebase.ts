@@ -47,26 +47,42 @@ interface FirestoreErrorInfo {
 }
 
 export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
-    error: error instanceof Error ? error.message : String(error),
+  // Extract error message safely
+  let errorMessage = 'Unknown error';
+  if (error instanceof Error) {
+    errorMessage = error.message;
+  } else if (typeof error === 'string') {
+    errorMessage = error;
+  } else {
+    try {
+      errorMessage = JSON.stringify(error);
+    } catch {
+      errorMessage = String(error);
+    }
+  }
+
+  const errInfo = {
+    error: errorMessage,
     authInfo: {
       userId: auth.currentUser?.uid,
       email: auth.currentUser?.email,
       emailVerified: auth.currentUser?.emailVerified,
-      isAnonymous: auth.currentUser?.isAnonymous,
-      tenantId: auth.currentUser?.tenantId,
-      providerInfo: auth.currentUser?.providerData.map(provider => ({
-        providerId: provider.providerId,
-        displayName: provider.displayName,
-        email: provider.email,
-        photoUrl: provider.photoURL
-      })) || []
+      isAnonymous: auth.currentUser?.isAnonymous
     },
     operationType,
     path
-  }
-  console.error('Firestore Error: ', JSON.stringify(errInfo));
-  throw new Error(JSON.stringify(errInfo));
+  };
+  
+  // Log parts separately to avoid circularity if it still exists
+  console.group('Firestore Error');
+  console.error('Operation:', operationType);
+  console.error('Path:', path);
+  console.error('Message:', errorMessage);
+  console.error('Auth:', errInfo.authInfo);
+  console.groupEnd();
+
+  // Throw a serializable error
+  throw new Error(`Firestore ${operationType} failure at ${path}: ${errorMessage}`);
 }
 
 // Connection test

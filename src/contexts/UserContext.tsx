@@ -7,31 +7,31 @@ interface UserContextType {
   user: FirebaseUser | null;
   userData: any | null;
   loading: boolean;
+  logout: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType>({
   user: null,
   userData: null,
   loading: true,
+  logout: async () => {},
 });
 
 export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [userData, setUserData] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [dataLoading, setDataLoading] = useState(false);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
-      console.log("Auth state changed:", u?.uid || "No user");
       setUser(u);
+      setAuthLoading(false);
       if (!u) {
-        console.log("User is logged out");
         setUserData(null);
-        setLoading(false);
+        setDataLoading(false);
       } else {
-        console.log("User is logged in, fetching data for:", u.uid);
-        // If we have a user, we should be in a loading state until userData is fetched
-        setLoading(true);
+        setDataLoading(true);
       }
     });
     return () => unsubscribeAuth();
@@ -40,27 +40,31 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     if (!user) return;
 
-    console.log("Attaching onSnapshot for user data:", user.uid);
     const unsubscribeDoc = onSnapshot(doc(db, 'users', user.uid), (doc) => {
       if (doc.exists()) {
-        console.log("User data loaded:", doc.data().firstName);
         setUserData(doc.data());
       } else {
-        console.warn("User document does not exist for:", user.uid);
         setUserData(null);
       }
-      setLoading(false);
+      setDataLoading(false);
     }, (error) => {
-      console.error("Error fetching user data:", error);
       handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
-      setLoading(false);
+      setDataLoading(false);
     });
 
     return () => unsubscribeDoc();
   }, [user]);
 
+  const logout = async () => {
+    try {
+      await auth.signOut();
+    } catch (error) {
+      console.error("Logout failed:", error);
+    }
+  };
+
   return (
-    <UserContext.Provider value={{ user, userData, loading }}>
+    <UserContext.Provider value={{ user, userData, loading: authLoading, logout }}>
       {children}
     </UserContext.Provider>
   );

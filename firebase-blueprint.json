@@ -87,6 +87,7 @@
         "followers": { "type": "number" },
         "following": { "type": "number" },
         "postCount": { "type": "number" },
+        "friendsCount": { "type": "number", "description": "Total number of friends" },
         "createdAt": { "type": "string", "format": "date-time" },
         "onboardingCompleted": { "type": "boolean" }
       },
@@ -103,6 +104,8 @@
         "userAvatar": { "type": "string" },
         "text": { "type": "string" },
         "image": { "type": "string" },
+        "video": { "type": "string" },
+        "isReel": { "type": "boolean" },
         "privacy": { "type": "string", "enum": ["Public", "Friends", "Only Me"] },
         "createdAt": { "type": "string", "format": "date-time" },
         "likes": { "type": "number" },

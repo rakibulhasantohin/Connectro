@@ -10,22 +10,20 @@ import {
   Mic, 
   Smile, 
   Send,
-  MoreVertical,
-  User,
-  Check,
-  CheckCheck,
-  Loader2
+  Loader2,
+  Image,
+  Sticker,
+  Heart
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useUser } from '../contexts/UserContext';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { db, handleFirestoreError, OperationType } from '../firebase';
 import { 
   collection, 
   addDoc, 
   query, 
   onSnapshot, 
   orderBy, 
-  Timestamp, 
   doc, 
   updateDoc,
   serverTimestamp,
@@ -33,6 +31,7 @@ import {
   getDoc,
   increment
 } from 'firebase/firestore';
+import { motion } from 'motion/react';
 
 interface Message {
   id: string;
@@ -47,42 +46,6 @@ interface ChatWindowProps {
   onBack: () => void;
 }
 
-const TimeAgo: React.FC<{ timestamp: any }> = ({ timestamp }) => {
-  const [timeAgo, setTimeAgo] = useState('');
-
-  useEffect(() => {
-    const updateTime = () => {
-      if (!timestamp) {
-        setTimeAgo('Just now');
-        return;
-      }
-      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
-      const now = new Date();
-      const diffInSeconds = Math.max(0, Math.floor((now.getTime() - date.getTime()) / 1000));
-      
-      if (diffInSeconds < 60) {
-        setTimeAgo(`${diffInSeconds}s ago`);
-      } else if (diffInSeconds < 3600) {
-        setTimeAgo(`${Math.floor(diffInSeconds / 60)}m ago`);
-      } else if (diffInSeconds < 86400) {
-        setTimeAgo(`${Math.floor(diffInSeconds / 3600)}h ago`);
-      } else if (diffInSeconds < 604800) {
-        setTimeAgo(`${Math.floor(diffInSeconds / 86400)}d ago`);
-      } else {
-        setTimeAgo(date.toLocaleDateString());
-      }
-    };
-
-    updateTime();
-    const interval = setInterval(updateTime, 10000); // Update every 10 seconds
-    return () => clearInterval(interval);
-  }, [timestamp]);
-
-  return <span>{timeAgo}</span>;
-};
-
-import { motion } from 'motion/react';
-
 export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBack }) => {
   const { user } = useUser();
   const [otherUserData, setOtherUserData] = useState<any>(otherUser);
@@ -96,262 +59,135 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ chatId, otherUser, onBac
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Fetch other user data if not provided
-  useEffect(() => {
-    if (otherUser) {
-      setOtherUserData(otherUser);
-      return;
-    }
-
-    if (!chatId || !user) return;
-
-    const fetchOtherUser = async () => {
-      try {
-        const otherUserId = chatId.split('_').find(id => id !== user.uid);
-        if (otherUserId) {
-          const userDoc = await getDoc(doc(db, 'users', otherUserId));
-          if (userDoc.exists()) {
-            setOtherUserData(userDoc.data());
-          }
-        }
-      } catch (error) {
-        console.error("Error fetching other user:", error);
-      }
-    };
-
-    fetchOtherUser();
-  }, [chatId, otherUser, user]);
-
   useEffect(() => {
     if (!chatId) return;
 
-    const q = query(
-      collection(db, 'chats', chatId, 'messages'),
-      orderBy('createdAt', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const msgs = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Message[];
-      setMessages(msgs);
+    const q = query(collection(db, 'chats', chatId, 'messages'), orderBy('createdAt', 'asc'));
+    const unsub = onSnapshot(q, (snap) => {
+      setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() } as Message)));
       setLoading(false);
-      setTimeout(scrollToBottom, 100);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`);
-      setLoading(false);
-    });
+      setTimeout(scrollToBottom, 50);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, `chats/${chatId}/messages`));
 
-    // Mark as read
     if (user) {
-      const chatRef = doc(db, 'chats', chatId);
-      getDoc(chatRef).then(docSnap => {
-        if (docSnap.exists()) {
-          updateDoc(chatRef, {
-            [`unreadCount.${user.uid}`]: 0
-          }).catch(err => console.error("Error marking as read:", err));
-        }
-      });
+      updateDoc(doc(db, 'chats', chatId), { [`unreadCount.${user.uid}`]: 0 }).catch(console.error);
     }
 
-    return () => unsubscribe();
+    return () => unsub();
   }, [chatId, user]);
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (!inputText.trim() || !user || sending) return;
 
-    setSending(true);
-    const text = inputText.trim();
+    const text = inputText;
     setInputText('');
+    setSending(true);
 
     try {
       const otherUserId = chatId.split('_').find(id => id !== user.uid);
-      if (!otherUserId) throw new Error("Could not determine other user ID");
-
-      // Ensure chat document exists
       const chatRef = doc(db, 'chats', chatId);
-      const chatSnap = await getDoc(chatRef);
       
-      if (!chatSnap.exists()) {
-        await setDoc(chatRef, {
-          participants: [user.uid, otherUserId],
-          lastMessage: text,
-          lastMessageAt: serverTimestamp(),
-          unreadCount: {
-            [user.uid]: 0,
-            [otherUserId]: 1
-          }
-        });
-      } else {
-        await updateDoc(chatRef, {
-          lastMessage: text,
-          lastMessageAt: serverTimestamp(),
-          [`unreadCount.${otherUserId}`]: increment(1)
-        });
-      }
+      await updateDoc(chatRef, {
+        lastMessage: text,
+        lastMessageAt: serverTimestamp(),
+        [`unreadCount.${otherUserId}`]: increment(1)
+      });
 
-      const messageData = {
+      await addDoc(collection(db, 'chats', chatId, 'messages'), {
         senderId: user.uid,
         text,
         createdAt: serverTimestamp()
-      };
-
-      await addDoc(collection(db, 'chats', chatId, 'messages'), messageData);
-
+      });
       scrollToBottom();
-    } catch (error) {
-      console.error("Error sending message:", error);
+    } catch (e) {
+      console.error(e);
     } finally {
       setSending(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-[100] bg-white flex flex-col">
+    <div className="fixed inset-0 z-[100] bg-black flex flex-col text-white">
       {/* Header */}
-      <div className="px-4 py-3 flex items-center justify-between border-b border-zinc-100 bg-white/90 backdrop-blur-xl sticky top-0 z-10">
+      <div className="px-4 py-3 flex items-center justify-between border-b border-zinc-900 sticky top-0 bg-black z-20">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="p-2 hover:bg-zinc-100 rounded-full transition-colors active:scale-90">
-            <ChevronLeft className="w-6 h-6 text-primary" />
+          <button onClick={onBack} className="p-1">
+            <ChevronLeft className="w-7 h-7" />
           </button>
-          <div className="flex items-center gap-3 cursor-pointer group">
-            <div className="relative">
-              <div className="w-10 h-10 rounded-full overflow-hidden border border-zinc-100 group-hover:scale-105 transition-transform">
-                {otherUserData?.avatar ? (
-                  <img src={otherUserData.avatar} alt="User" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                    <User className="w-5 h-5 text-zinc-300" />
-                  </div>
-                )}
-              </div>
-              <div className="absolute bottom-0 right-0 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white"></div>
-            </div>
+          <div className="flex items-center gap-3">
+            <img src={otherUserData?.avatar} className="w-9 h-9 rounded-full object-cover" />
             <div>
-              <h4 className="text-sm font-black text-zinc-900 tracking-tight leading-none mb-1">{otherUserData?.firstName} {otherUserData?.lastName}</h4>
-              <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest leading-none">Active now</p>
+              <p className="text-sm font-bold leading-tight">{otherUserData?.firstName} {otherUserData?.lastName}</p>
+              <p className="text-[10px] text-zinc-500">Active 2h ago</p>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <button className="w-10 h-10 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><Phone className="w-5 h-5" /></button>
-          <button className="w-10 h-10 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><Video className="w-5 h-5" /></button>
-          <button className="w-10 h-10 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><Info className="w-5 h-5" /></button>
+        <div className="flex items-center gap-5">
+          <Phone className="w-6 h-6" />
+          <Video className="w-6 h-6" />
         </div>
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-4 bg-zinc-50/30">
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <div className="w-10 h-10 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-            <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">Loading conversation...</p>
-          </div>
-        ) : messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-10 text-center px-10">
-            <div className="w-20 h-20 rounded-full overflow-hidden mb-4 border-4 border-white shadow-xl">
-              {otherUserData?.avatar ? (
-                <img src={otherUserData.avatar} alt="User" className="w-full h-full object-cover" />
-              ) : (
-                <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                  <User className="w-8 h-8 text-zinc-300" />
-                </div>
-              )}
-            </div>
-            <h3 className="text-xl font-black text-zinc-900 tracking-tighter mb-1">{otherUserData?.firstName} {otherUserData?.lastName}</h3>
-            <p className="text-zinc-400 text-[10px] font-black uppercase tracking-widest mb-6">You're friends on Connectro</p>
-            <button className="bg-zinc-100 text-zinc-900 px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-zinc-200 transition-all">View Profile</button>
-          </div>
-        ) : (
-          messages.map((msg, idx) => {
-            const isMe = msg.senderId === user?.uid;
-            const showAvatar = !isMe && (idx === 0 || messages[idx - 1].senderId !== msg.senderId);
-            
-            return (
-              <motion.div 
-                initial={{ opacity: 0, y: 10, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ duration: 0.2 }}
-                key={msg.id} 
-                className={cn(
-                "flex gap-2 max-w-[85%]",
-                isMe ? "ml-auto flex-row-reverse" : "mr-auto"
+      <div className="flex-1 overflow-y-auto no-scrollbar p-4 space-y-2">
+        <div className="flex flex-col items-center py-10">
+           <img src={otherUserData?.avatar} className="w-20 h-20 rounded-full mb-3" />
+           <p className="text-xl font-bold">{otherUserData?.firstName} {otherUserData?.lastName}</p>
+           <p className="text-sm text-zinc-500">Connectro · {otherUserData?.firstName?.toLowerCase()}</p>
+           <button className="mt-4 bg-zinc-900 px-4 py-1.5 rounded-lg text-sm font-bold">View Profile</button>
+        </div>
+
+        {messages.map((msg, idx) => {
+          const isMe = msg.senderId === user?.uid;
+          const isLastFromUser = idx === messages.length - 1 || messages[idx + 1].senderId !== msg.senderId;
+          
+          return (
+            <div key={msg.id} className={cn("flex flex-col", isMe ? "items-end" : "items-start")}>
+              <div className={cn(
+                "max-w-[75%] px-4 py-2.5 rounded-2xl text-[14px]",
+                isMe ? "bg-blue-600 text-white" : "bg-zinc-900 text-white",
+                !isMe && isLastFromUser ? "rounded-bl-md" : "",
+                isMe && isLastFromUser ? "rounded-br-md" : ""
               )}>
-                {!isMe && (
-                  <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 mt-auto mb-1">
-                    {showAvatar ? (
-                      otherUserData?.avatar ? (
-                        <img src={otherUserData.avatar} alt="User" className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full bg-zinc-100 flex items-center justify-center">
-                          <User className="w-4 h-4 text-zinc-300" />
-                        </div>
-                      )
-                    ) : <div className="w-8 h-8" />}
-                  </div>
-                )}
-                <div className="flex flex-col gap-1">
-                  <div className={cn(
-                    "px-4 py-2.5 rounded-[1.5rem] text-sm font-medium shadow-sm",
-                    isMe 
-                      ? "bg-primary text-white rounded-br-none" 
-                      : "bg-white text-zinc-900 border border-zinc-100 rounded-bl-none"
-                  )}>
-                    {msg.text}
-                  </div>
-                  <div className={cn(
-                    "flex items-center gap-1 px-1",
-                    isMe ? "justify-end" : "justify-start"
-                  )}>
-                    <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                      <TimeAgo timestamp={msg.createdAt} />
-                    </span>
-                    {idx === messages.length - 1 && isMe && (
-                      <CheckCheck className="w-3 h-3 text-primary" />
-                    )}
-                  </div>
-                </div>
-              </motion.div>
-            );
-          })
-        )}
+                {msg.text}
+              </div>
+            </div>
+          );
+        })}
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input Area */}
-      <div className="p-4 bg-white border-t border-zinc-100 sticky bottom-0">
-        <form onSubmit={handleSendMessage} className="flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <button type="button" className="w-9 h-9 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><Plus className="w-5 h-5" /></button>
-            <button type="button" className="w-9 h-9 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><Camera className="w-5 h-5" /></button>
-            <button type="button" className="w-9 h-9 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><ImageIcon className="w-5 h-5" /></button>
-            <button type="button" className="w-9 h-9 flex items-center justify-center text-primary hover:bg-zinc-50 rounded-full transition-all active:scale-90"><Mic className="w-5 h-5" /></button>
-          </div>
-          <div className="flex-1 relative">
+      <div className="p-4">
+        <div className="bg-zinc-900 rounded-full flex items-center px-4 py-2 gap-3 min-h-[44px]">
+          <button className="bg-blue-600 rounded-full p-1.5">
+            <Camera className="w-4 h-4 text-white fill-white" />
+          </button>
+          <form className="flex-1" onSubmit={handleSendMessage}>
             <input 
               type="text" 
+              placeholder="Message..." 
+              className="bg-transparent border-none p-0 text-sm w-full focus:ring-0 placeholder:text-zinc-500"
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              placeholder="Aa" 
-              className="w-full bg-zinc-100 border-none rounded-full py-2.5 px-4 pr-10 text-sm font-medium focus:ring-2 focus:ring-primary/20 outline-none transition-all"
             />
-            <button type="button" className="absolute right-2 top-1/2 -translate-y-1/2 text-primary hover:scale-110 transition-transform">
-              <Smile className="w-5 h-5" />
+          </form>
+          {inputText.trim() ? (
+            <button 
+              onClick={handleSendMessage}
+              className="text-blue-500 font-bold text-sm"
+            >
+              Send
             </button>
-          </div>
-          <button 
-            type="submit"
-            disabled={!inputText.trim() || sending}
-            className={cn(
-              "w-10 h-10 flex items-center justify-center rounded-full transition-all active:scale-90",
-              inputText.trim() ? "bg-primary text-white shadow-lg shadow-primary/20" : "text-primary"
-            )}
-          >
-            {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
-          </button>
-        </form>
+          ) : (
+            <div className="flex items-center gap-4">
+              <Mic className="w-5 h-5 text-white" />
+              <ImageIcon className="w-5 h-5 text-white" />
+              <Sticker className="w-5 h-5 text-white" />
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
